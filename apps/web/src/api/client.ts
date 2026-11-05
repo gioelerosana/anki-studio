@@ -2,9 +2,13 @@
  * Client dell'API. Stessa origine della PWA (/api): in sviluppo ci pensa il
  * proxy di Vite, in produzione lo stesso processo dell'API serve anche la PWA
  * (backend/app/web.py).
+ *
+ * Niente token: l'accesso è il cookie di sessione HttpOnly che il backend imposta
+ * dopo il login su Authentik (app/auth.tsx). Un 401 vuol dire sessione scaduta.
  */
-import { getSettings } from '../settings';
 import type {
+  AuthLogout,
+  AuthUser,
   DeckNode,
   DeckOptions,
   NoteSearchResult,
@@ -28,16 +32,22 @@ export class ApiError extends Error {
   }
 }
 
+const unauthorizedListeners = new Set<() => void>();
+
+/** Chiamato a ogni 401 dell'API: la sessione è scaduta o è stata chiusa. */
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
     credentials: 'same-origin',
-    headers: {
-      Authorization: `Bearer ${getSettings().apiToken}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) unauthorizedListeners.forEach((l) => l());
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -52,9 +62,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  /** Imposta il cookie che permette a <img>/<audio> delle carte di caricare i media. */
-  createSession: () => request<void>('POST', '/auth/session'),
-  deleteSession: () => request<void>('DELETE', '/auth/session'),
+  me: () => request<AuthUser>('GET', '/auth/me'),
+  logout: () => request<AuthLogout>('POST', '/auth/logout'),
 
   decks: () => request<DeckNode[]>('GET', '/decks'),
   todayStats: () => request<TodayStats>('GET', '/stats/today'),

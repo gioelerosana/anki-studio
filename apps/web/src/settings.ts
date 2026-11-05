@@ -9,8 +9,6 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 export interface Settings {
   theme: ThemePreference;
   reduceMotion: boolean;
-  /** Token del backend (ANKI_API_TOKEN). Vuoto = schermata di collegamento. */
-  apiToken: string;
   /** Ultimi tipo di nota e mazzo usati in «Aggiungi carta» (0 = nessuno). */
   lastNotetypeId: number;
   lastDeckId: number;
@@ -23,7 +21,6 @@ const THEMES: readonly ThemePreference[] = ['system', 'light', 'dark'];
 const defaults = (): Settings => ({
   theme: 'system',
   reduceMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
-  apiToken: '',
   lastNotetypeId: 0,
   lastDeckId: 0,
 });
@@ -35,7 +32,6 @@ function read(): Settings {
     return {
       theme: THEMES.find((t) => t === raw.theme) ?? base.theme,
       reduceMotion: typeof raw.reduceMotion === 'boolean' ? raw.reduceMotion : base.reduceMotion,
-      apiToken: typeof raw.apiToken === 'string' ? raw.apiToken : base.apiToken,
       lastNotetypeId: typeof raw.lastNotetypeId === 'number' ? raw.lastNotetypeId : base.lastNotetypeId,
       lastDeckId: typeof raw.lastDeckId === 'number' ? raw.lastDeckId : base.lastDeckId,
     };
@@ -45,6 +41,13 @@ function read(): Settings {
 }
 
 let current: Settings = read();
+
+// Le versioni con il token lo tenevano qui: riscrivendo le preferenze sparisce.
+try {
+  if (localStorage.getItem(KEY)?.includes('"apiToken"')) localStorage.setItem(KEY, JSON.stringify(current));
+} catch {
+  // storage bloccato: niente da pulire
+}
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void) {

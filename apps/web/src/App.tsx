@@ -1,13 +1,11 @@
 /*
- * Shell dell'app: senza token la schermata di collegamento, altrimenti le
- * schermate scelte dall'hash (app/route.ts): mazzi, studio, aggiungi, impostazioni.
+ * Shell dell'app: prima l'accesso con Authentik (app/auth.tsx), poi le schermate
+ * scelte dall'hash (app/route.ts): mazzi, studio, aggiungi, impostazioni.
  */
-import { useEffect } from 'react';
-import { api } from './api/client';
+import { AuthGate } from './app/auth';
 import { useRoute } from './app/route';
 import { ToastProvider } from './app/toasts';
 import { AddScreen } from './screens/AddScreen';
-import { ConnectScreen } from './screens/ConnectScreen';
 import { DecksScreen } from './screens/DecksScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { StudyScreen } from './screens/StudyScreen';
@@ -15,7 +13,8 @@ import { useSettings } from './settings';
 import { SyncProvider } from './sync/SyncProvider';
 
 export function App() {
-  const { settings } = useSettings();
+  // tema e animazioni valgono anche nella schermata di accesso
+  useSettings();
   return (
     <ToastProvider>
       <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -25,13 +24,11 @@ export function App() {
             elemento fixed, largo quanto la vista e con uno sfondo opaco: questo, in ogni schermata.
             Altezza 0 fuori dalla PWA (nessuna safe area), quindi nel browser non si vede. */}
         <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-[env(safe-area-inset-top)] bg-background" />
-        {settings.apiToken ? (
+        <AuthGate>
           <SyncProvider>
             <Connected />
           </SyncProvider>
-        ) : (
-          <ConnectScreen />
-        )}
+        </AuthGate>
       </div>
     </ToastProvider>
   );
@@ -39,12 +36,6 @@ export function App() {
 
 function Connected() {
   const route = useRoute();
-
-  // Il cookie dei media dura un anno, ma iPadOS può svuotare i dati di una PWA poco usata:
-  // lo si rinnova a ogni avvio, così le immagini delle carte non spariscono.
-  useEffect(() => {
-    api.createSession().catch(() => {});
-  }, []);
 
   switch (route.name) {
     case 'study':
