@@ -1,0 +1,22 @@
+# Aggiornamenti proposti come PR (mai applicati da soli): le action pinnate per SHA
+# nel workflow e le immagini base pinnate per digest nel Dockerfile.
+# Le dipendenze Python stanno in backend/requirements.lock (rigeneralo con il comando
+# scritto in cima al file); quelle della PWA in pnpm-lock.yaml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
