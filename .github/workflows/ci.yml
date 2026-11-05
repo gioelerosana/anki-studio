@@ -3,7 +3,7 @@
 # - Ogni PR e ogni push: typecheck e build della PWA, pytest del backend, build
 #   dell'immagine per linux/amd64 e linux/arm64 con l'avvio di prova
 #   (scripts/smoke-test-image.sh). Niente push.
-# - Push di un tag vX.Y.Z: in più pubblica ghcr.io/<owner>/<repo> con i tag X.Y.Z,
+# - Push di un tag vX.Y.Z: in più pubblica ghcr.io/<owner>/<repo> (minuscolo) con i tag X.Y.Z,
 #   X.Y, latest (solo per le release stabili, non per vX.Y.Z-rc.1) e sha-<commit>.
 #
 # Unico segreto: GITHUB_TOKEN. `packages: write` ce l'ha solo il job `publish`.

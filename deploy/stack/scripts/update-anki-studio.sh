@@ -6,7 +6,7 @@
 # Vincoli (docs/infrastructure/04-maintenance-updates.md):
 #   - Il container non si aggiorna da solo; niente docker.sock dentro Anki Studio.
 #   - Il pin in Compose resta tag + digest: `task validate` continua a passare.
-#   - Solo canale stabile: ghcr.io/<owner>/anki-studio:latest, che la CI pubblica solo
+#   - Solo canale stabile: ghcr.io/gioelerosana/anki-studio:latest, che la CI pubblica solo
 #     per i tag vX.Y.Z senza suffisso (mai le -rc). Il pin usa il tag di versione letto
 #     dalla label org.opencontainers.image.version dell'immagine.
 #   - Rollback = pin precedente in Compose + recreate; l'immagine precedente resta su
@@ -36,7 +36,7 @@ export PATH="/usr/local/bin:/usr/bin:/bin"
 STACK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$STACK_DIR" || exit 1
 
-IMAGE="ghcr.io/OWNER/anki-studio" # in minuscolo, come lo pubblica la CI
+IMAGE="ghcr.io/gioelerosana/anki-studio" # in minuscolo, come lo pubblica la CI
 CHANNEL="latest"                  # solo release stabili
 COMPOSE_FILE="$STACK_DIR/COMPOSE/compose.anki-studio.yml"
 SERVICE="anki-studio"

@@ -10,8 +10,8 @@ seguendo le regole dello stack (`AGENTS.md`, `docs/infrastructure/04-maintenance
 | `traefik/config/services/anki-studio.yml` | `traefik/config/services/anki-studio.yml` |
 | `scripts/update-anki-studio.sh` | `scripts/update-anki-studio.sh` (facoltativo, auto-update controllato) |
 
-Segnaposto da sostituire: `OWNER` (owner GitHub in minuscolo, nel pin dell'immagine e nello
-script di update), il digest `sha256:000…` e il sottodominio `anki.jshep.xyz`.
+Segnaposto da sostituire: il digest `sha256:000…` (lo scrive la CI nel riepilogo della release)
+e, se serve, il sottodominio `anki.jshep.xyz`. L'owner è già `gioelerosana`.
 
 ## Cosa rispetta già
 
@@ -29,7 +29,7 @@ script di update), il digest `sha256:000…` e il sottodominio `anki.jshep.xyz`.
 ## Integrazione, passo per passo
 
 Prima di cominciare: pubblica la prima release (README del repo, sezione "Pubblicazione") e
-annota il riferimento `ghcr.io/<owner>/anki-studio:X.Y.Z@sha256:…` dal riepilogo del workflow.
+annota il riferimento `ghcr.io/gioelerosana/anki-studio:X.Y.Z@sha256:…` dal riepilogo del workflow.
 
 ### 1. Rete
 
@@ -74,7 +74,7 @@ controlla che ogni file di `.secrets.example/` esista in `.secrets/`.
 mkdir -p /home/ubuntu/stack/anki-studio/data
 # proprietario 1000:1000 (l'utente dell'immagine), mode 0700: serve root, oppure:
 docker run --rm --network none --user 0 -v /home/ubuntu/stack/anki-studio/data:/d \
-  --entrypoint sh ghcr.io/<owner>/anki-studio:X.Y.Z@sha256:… -c 'chown 1000:1000 /d && chmod 700 /d'
+  --entrypoint sh ghcr.io/gioelerosana/anki-studio:X.Y.Z@sha256:… -c 'chown 1000:1000 /d && chmod 700 /d'
 ```
 
 Se vuoi portare i dati del deploy di prova, segui prima **Migrazione dei dati** qui sotto.
@@ -146,7 +146,7 @@ docker compose stop            # fino a 120 s: aspetta, non interrompere
 docker compose logs api --tail 5      # deve esserci "Collezione chiusa"
 
 # 2. copia il volume nella directory dello stack (stessi UID/GID: 1000)
-IMG=ghcr.io/<owner>/anki-studio:X.Y.Z@sha256:…
+IMG=ghcr.io/gioelerosana/anki-studio:X.Y.Z@sha256:…
 mkdir -p /home/ubuntu/stack/anki-studio/data
 docker run --rm --network none --user 0 \
   -v anki-studio_anki-data:/from:ro -v /home/ubuntu/stack/anki-studio/data:/to \
@@ -169,7 +169,7 @@ senza problemi; solo allora, se vuoi: `docker compose down` in `/home/ubuntu/ank
 ## Aggiornamenti
 
 **A mano** (come gli altri servizi): nuovo tag `vX.Y.Z` nel repo → la CI pubblica l'immagine →
-copia `ghcr.io/<owner>/anki-studio:X.Y.Z@sha256:…` dal riepilogo del workflow nel Compose →
+copia `ghcr.io/gioelerosana/anki-studio:X.Y.Z@sha256:…` dal riepilogo del workflow nel Compose →
 `task validate` → `docker compose pull anki-studio` → `docker compose up -d --no-deps anki-studio`
 → verifica come sopra. Rollback: rimetti il pin precedente e ripeti `up -d`.
 
@@ -181,7 +181,7 @@ Telegram. Per attivarlo:
 
 ```bash
 cp …/deploy/stack/scripts/update-anki-studio.sh scripts/ && chmod +x scripts/update-anki-studio.sh
-# sostituisci OWNER in IMAGE=, poi prova senza modifiche:
+# prova senza modifiche:
 scripts/update-anki-studio.sh --dry-run
 # Taskfile.yml, accanto a hermes:update:
 #   anki-studio:update:

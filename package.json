@@ -1,6 +1,6 @@
 {
   "name": "anki-studio-monorepo",
-  "version": "0.1.0",
+  "version": "26.0.1",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.9.1",

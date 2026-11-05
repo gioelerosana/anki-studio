@@ -228,7 +228,7 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
 ## Healthcheck e log
 
 `GET /api/health` (senza token) risponde
-`{"ok": true, "collection": "open" | "busy", "syncing": …, "version": "0.1.0", "revision": "<commit>"}`:
+`{"ok": true, "collection": "open" | "busy", "syncing": …, "version": "26.0.1", "revision": "<commit>"}`:
 verifica che la collezione risponda a una query. Durante una sync lunga vale `busy` ma resta 200,
 perché un riavvio del container a metà sync sarebbe la cosa peggiore. 503 se la collezione è chiusa
 o illeggibile.

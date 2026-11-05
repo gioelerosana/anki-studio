@@ -32,7 +32,7 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
     fallback SPA, header. Sostituisce nginx: `/api/*` non passa mai di qui.
   - `requirements.lock` — dipendenze con hash per l'immagine e la CI (rigenerale con uv, vedi README).
 - `Dockerfile` — **un'unica immagine** (PWA + API, un processo, utente 1000:1000, compatibile con
-  `read_only`, healthcheck). Pubblicata su `ghcr.io/<owner>/anki-studio` da
+  `read_only`, healthcheck). Pubblicata su `ghcr.io/gioelerosana/anki-studio` da
   `.github/workflows/ci.yml` ai tag `vX.Y.Z`, per amd64 e arm64.
 - `docker-compose.yml` — l'immagine unica in locale / deploy di prova. Il reverse proxy HTTPS
   (Traefik) **non** è in questo repo: vive nello stack principale.

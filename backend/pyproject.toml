@@ -1,6 +1,6 @@
 [project]
 name = "anki-pwa-backend"
-version = "0.1.0"
+version = "26.0.1"
 description = "Backend FastAPI che espone una collezione Anki sincronizzata con AnkiWeb, pensato per una PWA su iPad."
 requires-python = ">=3.10"
 dependencies = [

@@ -5,7 +5,7 @@
 # confine /api e spegnimento pulito (sync finale + collezione chiusa).
 #
 #   scripts/smoke-test-image.sh anki-studio:local            # porta 18080
-#   PORT=18181 scripts/smoke-test-image.sh ghcr.io/<owner>/anki-studio:0.1.0
+#   PORT=18181 scripts/smoke-test-image.sh ghcr.io/gioelerosana/anki-studio:26.0.1
 #
 # Usa un container, una rete e un volume usa e getta con un nome suo: non tocca
 # nessun altro progetto compose né i volumi esistenti. Lo usa anche la CI.

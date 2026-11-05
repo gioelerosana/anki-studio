@@ -22,7 +22,7 @@ iPad (PWA) ──HTTPS──▶ Traefik ──▶ anki-studio (un container, un 
 
 ## L'immagine Docker
 
-Un'unica immagine, `ghcr.io/<owner>/anki-studio`, per `linux/amd64` e `linux/arm64`. Dentro
+Un'unica immagine, `ghcr.io/gioelerosana/anki-studio`, per `linux/amd64` e `linux/arm64`. Dentro
 c'è un solo processo: uvicorn con **un worker** (la collezione Anki va aperta da un unico
 processo), che serve anche la PWA sulla stessa origine dell'API, così non serve CORS e il
 cookie dei media funziona. Le regole che prima stavano in nginx sono in `backend/app/web.py`:
@@ -82,57 +82,52 @@ Usa solo il `GITHUB_TOKEN` del workflow: nessun segreto da configurare.
 La versione viene dal tag: PWA (Impostazioni), `/api/health` e label dell'immagine la
 prendono da lì, non serve cambiarla nei `package.json`.
 
-### La prima volta
+### Numerazione
 
-1. **Crea il repository** su GitHub (il nome del repo diventa il nome dell'immagine,
-   `ghcr.io/<owner>/<repo>`). Con la CLI, dalla radice di questo checkout:
+Versioni nel formato `AA.V.M`, con tag `vAA.V.M`:
+
+- `AA`: anno a due cifre (`26` = 2026);
+- `V`: versione dell'app nell'anno (parte da `0`; sale quando cambia qualcosa di grosso);
+- `M`: release minore, da `1` (la prima è **26.0.1**).
+
+Rispetta `vX.Y.Z`, quindi la CI e lo script di update funzionano senza modifiche. Le
+pre-release sono `vAA.V.M-rc.N`.
+
+### Pubblicare una release
+
+1. Porta il lavoro su `main` (la CI gira su `main`, sulle PR e sui tag) e controlla che il
+   workflow **CI** sia verde su Actions.
+2. Tagga `main` e fai push del tag:
    ```bash
-   gh repo create <owner>/anki-studio --private --source . --remote origin
-   ```
-   oppure crealo vuoto dal sito e `git remote add origin git@github.com:<owner>/anki-studio.git`.
-2. **Porta il lavoro su `main` e fai push**:
-   ```bash
-   git switch main && git merge --ff-only feat/immagine-docker
-   git push -u origin main
-   ```
-   Su GitHub → Actions controlla che il workflow **CI** sia verde (il primo giro dura di più:
-   la cache è vuota e arm64 gira sotto QEMU).
-3. **Primo tag**:
-   ```bash
-   git tag -a v0.1.0 -m "Anki Studio 0.1.0"
-   git push origin v0.1.0
+   git tag -a v26.0.1 -m "Anki Studio 26.0.1"
+   git push origin v26.0.1
    ```
    Il job **Pubblica su GHCR** scrive nel riepilogo il riferimento da pinnare,
-   `ghcr.io/<owner>/anki-studio:0.1.0@sha256:…`.
-4. **Visibilità del package**. Un package nuovo su GHCR nasce privato.
+   `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:…`.
+3. **Visibilità del package** (solo la prima volta). Un package nuovo su GHCR nasce privato.
    - *Pubblico* (più semplice, il codice non contiene segreti): GitHub → il tuo profilo →
      Packages → `anki-studio` → Package settings → Change visibility → Public.
    - *Privato*: sul server serve un login a GHCR con un personal access token (classic) con il
      solo scope `read:packages`:
      ```bash
-     docker login ghcr.io -u <utente-github>    # incolla il token come password
+     docker login ghcr.io -u gioelerosana    # incolla il token come password
      ```
      Docker salva la credenziale in `~/.docker/config.json`: tienila con permessi 600.
    In entrambi i casi, nelle Package settings collega il package al repository
    (di solito lo fa da sé grazie alla label `org.opencontainers.image.source`).
-5. **Digest e pin nello stack**. Il riferimento completo è nel riepilogo del workflow; in
+4. **Digest e pin nello stack**. Il riferimento completo è nel riepilogo del workflow; in
    alternativa, dal server:
    ```bash
-   docker buildx imagetools inspect ghcr.io/<owner>/anki-studio:0.1.0 | sed -n 3p   # Digest: sha256:…
+   docker buildx imagetools inspect ghcr.io/gioelerosana/anki-studio:26.0.1 | sed -n 3p   # Digest: sha256:…
    ```
    È il digest dell'indice multi-arch (vale per arm64 e amd64). Va scritto come
-   `ghcr.io/<owner>/anki-studio:0.1.0@sha256:…` in `COMPOSE/compose.anki-studio.yml` dello stack,
+   `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:…` in `COMPOSE/compose.anki-studio.yml` dello stack,
    poi `task validate`: il resto è in [deploy/stack/README.md](deploy/stack/README.md).
 
-### Le release successive
-
-```bash
-git tag -a v0.2.0 -m "Anki Studio 0.2.0" && git push origin v0.2.0
-```
-
-Poi aggiorna il pin nello stack a mano, oppure lascia fare a `scripts/update-anki-studio.sh`
-se hai attivato l'auto-update controllato. Per verificare cosa è stato pubblicato:
-`docker buildx imagetools inspect ghcr.io/<owner>/anki-studio:0.2.0 --format '{{json .Provenance}}'`.
+Per le release successive basta un nuovo tag (`v26.0.2`, …) e aggiornare il pin nello stack a
+mano, oppure lasciar fare a `scripts/update-anki-studio.sh` se hai attivato l'auto-update
+controllato. Per verificare cosa è stato pubblicato:
+`docker buildx imagetools inspect ghcr.io/gioelerosana/anki-studio:26.0.1 --format '{{json .Provenance}}'`.
 
 Dependabot (`.github/dependabot.yml`) propone come PR gli aggiornamenti delle action e delle
 immagini base, entrambe pinnate per digest. Le dipendenze Python sono fissate con gli hash in
