@@ -6,6 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
     "anki==26.9.4",
     "fastapi>=0.115",
+    # RequestBodyLimitMiddleware (limite al body, come client_max_body_size di nginx)
+    "starlette>=1.10",
     "uvicorn[standard]>=0.30",
     "pydantic-settings>=2.4",
 ]

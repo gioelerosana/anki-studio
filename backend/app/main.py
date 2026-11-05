@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
@@ -16,12 +17,19 @@ from .logging_setup import register_secret, setup_logging
 from .routers import auth, browse, decks, media, notes, study, sync
 from .security import RateLimiter, require_token, security_headers
 from .sync import SyncService, next_auto_delay
+from .web import pwa_app
 
 log = logging.getLogger("anki_studio")
 
-# allo spegnimento Docker concede stop_grace_period (60 s): stiamo larghi
+# Allo spegnimento: 30 s di uvicorn per le richieste in corso (--timeout-graceful-shutdown),
+# fino a 30 s per la sync in corso, 15 s per l'ultima sync, poi la chiusura. Docker deve
+# concedere almeno 120 s prima del SIGKILL (stop_grace_period nei file compose).
 _SHUTDOWN_WAIT_S = 30
 _SHUTDOWN_SYNC_TIMEOUT_S = 15
+
+# Come client_max_body_size di nginx: il body viene letto prima del controllo del token,
+# quindi senza limite chiunque potrebbe riempire la memoria con una richiesta enorme.
+MAX_BODY_BYTES = 50 * 1024 * 1024
 
 
 async def _background_sync(app: FastAPI, settings: Settings) -> None:
@@ -119,7 +127,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await run_in_threadpool(manager.close)
             log.info("Collezione chiusa")
 
-    app = FastAPI(title="Anki Studio API", version="0.2.0", lifespan=lifespan)
+    web = pwa_app(settings.anki_web_dir)
+    # con la PWA sulla stessa origine /docs sarebbe pubblico: la documentazione interattiva
+    # resta solo in sviluppo, quando l'API gira da sola (nginx prima inoltrava solo /api)
+    docs = web is None
+    app = FastAPI(
+        title="Anki Studio API",
+        version=settings.anki_studio_version,
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
     app.dependency_overrides[get_settings] = lambda: settings
     app.state.token_limiter = RateLimiter(
         settings.anki_token_max_failures, settings.anki_token_window_s
@@ -137,6 +156,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
         )
 
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_BODY_BYTES)
+
     access = logging.getLogger("anki_studio.access")
 
     @app.middleware("http")
@@ -144,7 +165,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start = time.perf_counter()
         response = await call_next(request)
         security_headers(request, response.headers)
-        level = logging.DEBUG if request.url.path == "/api/health" else logging.INFO
+        path = request.url.path
+        # health e file statici riuscito sono rumore: in DEBUG
+        quiet = path == "/api/health" or (
+            not path.startswith("/api/") and response.status_code in (200, 304)
+        )
+        level = logging.DEBUG if quiet else logging.INFO
         # solo il path: niente query string né header (dove viaggiano i token)
         access.log(
             level,
@@ -191,7 +217,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:  # noqa: BLE001
             log.exception("Healthcheck: collezione non leggibile")
             return JSONResponse({"ok": False, "collection": "error"}, status_code=503)
-        return {"ok": True, "collection": state, "syncing": syncing is not None}
+        return {
+            "ok": True,
+            "collection": state,
+            "syncing": syncing is not None,
+            "version": settings.anki_studio_version,
+            "revision": settings.anki_studio_revision or None,
+        }
 
     protected = [Depends(require_token)]
     for r in (decks.router, study.router, notes.router, browse.router, sync.router):
@@ -199,6 +231,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # i media accettano anche il cookie, le sessioni gestiscono da sé l'autenticazione
     app.include_router(media.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    if web is not None:
+        # La PWA è il "default" del router, non un Mount su "/": così entra in gioco solo
+        # quando nessuna rotta corrisponde, e un metodo sbagliato su una rotta API resta 405.
+        app.router.default = web
     return app
 
 

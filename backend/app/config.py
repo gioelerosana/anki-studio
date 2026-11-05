@@ -2,14 +2,19 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # hide_input_in_errors: un errore di validazione (es. token troppo corto) non deve
+    # stampare nei log del container il valore del token o della password AnkiWeb
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     anki_api_token: str = Field(min_length=16)
+    # In alternativa al token in chiaro nell'ambiente: il percorso di un file che lo contiene
+    # (Docker secret, es. /run/secrets/anki_api_token). Vince il file, se c'è.
+    anki_api_token_file: Path | None = None
     anki_data_dir: Path = Path("./data")
     anki_cors_origins: str = ""
     anki_auto_sync_minutes: float = 10
@@ -37,6 +42,33 @@ class Settings(BaseSettings):
 
     ankiweb_username: str | None = None
     ankiweb_password: str | None = None
+
+    # Build della PWA da servire sulla stessa origine (app/web.py). Vuoto = solo API
+    # (sviluppo: la PWA la serve Vite). Nell'immagine Docker vale /srv/web.
+    anki_web_dir: Path | None = None
+    # Versione e commit dell'immagine (build arg, vedi Dockerfile): li mostra /api/health.
+    anki_studio_version: str = "dev"
+    anki_studio_revision: str = ""
+
+    @field_validator("anki_web_dir", "anki_api_token_file", mode="before")
+    @classmethod
+    def _empty_is_none(cls, v):
+        return None if v == "" else v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _token_from_file(cls, data):
+        if not isinstance(data, dict):
+            return data
+        path = data.get("anki_api_token_file") or data.get("ANKI_API_TOKEN_FILE")
+        if not path:
+            return data
+        try:
+            token = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as e:
+            # niente contenuto del file nel messaggio: solo il percorso e l'errore
+            raise ValueError(f"ANKI_API_TOKEN_FILE: impossibile leggere {path} ({e.strerror})") from None
+        return {**data, "anki_api_token": token}
 
     @field_validator("anki_api_token")
     @classmethod

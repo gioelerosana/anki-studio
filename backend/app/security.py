@@ -159,7 +159,15 @@ _MEDIA_CSP = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-
 
 def security_headers(request: Request, headers) -> None:
     path = request.url.path
-    if not path.startswith("/api/"):
+    if request.url.scheme == "https":
+        headers.setdefault("Strict-Transport-Security", "max-age=15552000")
+    if path != "/api" and not path.startswith("/api/"):
+        # la PWA (app/web.py): la CSP della shell la mette PWAFiles su index.html,
+        # la cache dipende dal file. Niente iframe: la PWA non va incorniciata da altri.
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("Referrer-Policy", "no-referrer")
+        headers.setdefault("X-Frame-Options", "DENY")
+        headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
         return
     headers.setdefault("X-Content-Type-Options", "nosniff")
     headers.setdefault("Referrer-Policy", "no-referrer")
@@ -170,5 +178,3 @@ def security_headers(request: Request, headers) -> None:
     )
     if "cache-control" not in headers:
         headers["Cache-Control"] = "no-store"
-    if request.url.scheme == "https":
-        headers.setdefault("Strict-Transport-Security", "max-age=15552000")
