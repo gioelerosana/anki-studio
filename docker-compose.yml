@@ -17,14 +17,18 @@ services:
     environment:
       ANKI_DATA_DIR: /data
     volumes:
-      # collezione, media e chiave di sync AnkiWeb. Backup: vedi README.
+      # collezione, media, backup e chiave di sync AnkiWeb. Backup: vedi backend/README.md.
       - anki-data:/data
-    stop_grace_period: 60s   # tempo per l'ultima sync con AnkiWeb allo spegnimento
+    # richieste in corso (30 s) + attesa della sync in corso (30 s) + ultima sync (15 s):
+    # Docker non deve uccidere il processo mentre scrive la collezione
+    stop_grace_period: 120s
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      # 200 anche durante una sync lunga ("busy"): un riavvio a metà sarebbe peggio
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
 
   web:
     build:
