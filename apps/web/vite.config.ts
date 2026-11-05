@@ -74,6 +74,11 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(appVersion),
   },
   plugins: [react(), precacheManifest(), devServiceWorkerReset()],
+  build: {
+    // MathJax (src/study/math.ts) è un chunk a parte da ~1,8 MB (640 kB gzip), caricato solo
+    // alla prima carta con una formula e messo in cache dal service worker: l'avviso non serve.
+    chunkSizeWarningLimit: 2000,
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

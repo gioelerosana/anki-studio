@@ -85,13 +85,41 @@ export interface SyncResult {
   finished_at: number;
   server_message: string;
   error: string | null;
+  /** network = offline (riprova da sola), auth = serve un nuovo login, server = AnkiWeb ha rifiutato, refused = bloccata per non perdere dati. */
+  error_kind?: 'network' | 'auth' | 'server' | 'refused' | 'other' | null;
 }
 
+export interface SyncProgress {
+  kind: 'full_sync' | 'normal_sync';
+  /** full_sync: byte trasferiti / totali (total = 0 finché non è noto). */
+  transferred?: number | null;
+  total?: number | null;
+  /** normal_sync: testi già tradotti da Anki. */
+  stage?: string | null;
+  added?: string | null;
+  removed?: string | null;
+}
+
+/*
+ * I campi opzionali da `running` in giù arrivano con il consolidamento del backend
+ * (sync in background): la PWA funziona anche con un backend che non li manda.
+ */
 export interface SyncStatus {
   logged_in: boolean;
   username: string | null;
   last_result: SyncResult | null;
   media: { active: boolean; checked?: string; added?: string; removed?: string; error: string | null };
+  running?: 'normal' | 'full_upload' | 'full_download' | null;
+  running_since?: number | null;
+  progress?: SyncProgress | null;
+  /** L'ultima sync ha trovato un conflitto: serve /sync/full (la sync automatica non lo risolve). */
+  full_sync_required?: boolean;
+  /** Server di sync configurato (null = AnkiWeb). */
+  endpoint?: string | null;
+  /** La chiave salvata è di un altro server: serve un nuovo login. */
+  endpoint_mismatch?: boolean;
+  next_auto_sync_at?: number | null;
+  auto_sync_failures?: number;
 }
 
 export interface TodayStats {

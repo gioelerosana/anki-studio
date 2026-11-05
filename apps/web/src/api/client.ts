@@ -49,6 +49,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   /** Imposta il cookie che permette a <img>/<audio> delle carte di caricare i media. */
   createSession: () => request<void>('POST', '/auth/session'),
+  deleteSession: () => request<void>('DELETE', '/auth/session'),
 
   decks: () => request<DeckNode[]>('GET', '/decks'),
   todayStats: () => request<TodayStats>('GET', '/stats/today'),

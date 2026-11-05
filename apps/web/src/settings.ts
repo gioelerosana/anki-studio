@@ -11,6 +11,9 @@ export interface Settings {
   reduceMotion: boolean;
   /** Token del backend (ANKI_API_TOKEN). Vuoto = schermata di collegamento. */
   apiToken: string;
+  /** Ultimi tipo di nota e mazzo usati in «Aggiungi carta» (0 = nessuno). */
+  lastNotetypeId: number;
+  lastDeckId: number;
 }
 
 const KEY = 'anki-studio.settings';
@@ -21,6 +24,8 @@ const defaults = (): Settings => ({
   theme: 'system',
   reduceMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
   apiToken: '',
+  lastNotetypeId: 0,
+  lastDeckId: 0,
 });
 
 function read(): Settings {
@@ -31,6 +36,8 @@ function read(): Settings {
       theme: THEMES.find((t) => t === raw.theme) ?? base.theme,
       reduceMotion: typeof raw.reduceMotion === 'boolean' ? raw.reduceMotion : base.reduceMotion,
       apiToken: typeof raw.apiToken === 'string' ? raw.apiToken : base.apiToken,
+      lastNotetypeId: typeof raw.lastNotetypeId === 'number' ? raw.lastNotetypeId : base.lastNotetypeId,
+      lastDeckId: typeof raw.lastDeckId === 'number' ? raw.lastDeckId : base.lastDeckId,
     };
   } catch {
     return base;
