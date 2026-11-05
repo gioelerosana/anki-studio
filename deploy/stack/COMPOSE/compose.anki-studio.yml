@@ -1,0 +1,72 @@
+# Anki Studio nello stack di myserv: PWA + API in un'unica immagine (ghcr.io).
+# Proposta da copiare in /home/ubuntu/stack/COMPOSE/ e aggiungere a `include:` in
+# compose.yml: le altre modifiche (rete, Traefik, Backrest, Taskfile, segreto) sono in
+# deploy/stack/README.md del repo anki-studio.
+#
+# Pin tag@sha256: come il resto dello stack (`task validate`). Il riferimento esatto
+# lo scrive il job "Pubblica su GHCR" nel riepilogo del workflow; aggiornamenti con
+# scripts/update-anki-studio.sh.
+
+x-logging: &default-logging
+    driver: json-file
+    options:
+        max-size: "10m"
+        max-file: "3"
+
+services:
+    anki-studio:
+        image: ghcr.io/OWNER/anki-studio:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        container_name: anki-studio
+        hostname: anki-studio
+        restart: always
+        # Allo stop: 30 s per le richieste in corso, fino a 30 s per la sync in corso,
+        # 15 s per l'ultima sync con AnkiWeb, poi la chiusura della collezione. Il
+        # default di Docker (10 s) la ucciderebbe a metà.
+        stop_grace_period: 120s
+        # Un solo processo Python; una full sync tiene in memoria la collezione.
+        mem_limit: 1g
+        mem_reservation: 256m
+        cpus: "1.0"
+        healthcheck:
+            # 200 anche durante una sync lunga ("busy"): riavviare a metà sarebbe peggio.
+            test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 30s
+        environment:
+            - ANKI_API_TOKEN_FILE=/run/secrets/anki_api_token
+            # Sync automatica con AnkiWeb ogni N minuti, oltre a quella all'avvio e allo stop.
+            - ANKI_AUTO_SYNC_MINUTES=10
+            - TZ=Europe/Rome
+        volumes:
+            # collezione, media, backup .colpkg e chiave di sync AnkiWeb (segreta, 0600).
+            # Proprietario 1000:1000, mode 0700. Backrest la legge in sola lettura.
+            - ./anki-studio/data:/data
+        secrets:
+            - anki_api_token
+        networks:
+            # rete edge dedicata condivisa solo con Traefik; serve anche l'uscita verso
+            # AnkiWeb (sync.ankiweb.net), quindi non è `internal`.
+            - edge-anki-studio
+        # UID/GID fissi dell'immagine; 1001 è il gid di ubuntu sull'host, che possiede i
+        # file 0640 in .secrets/ (come Backrest, n8n, Open Terminal...).
+        user: "1000:1000"
+        group_add:
+            - "1001"
+        read_only: true
+        tmpfs:
+            - /tmp:rw,noexec,nosuid,nodev,size=64m
+        cap_drop:
+            - ALL
+        pids_limit: 256
+        security_opt:
+            - no-new-privileges:true
+        labels:
+            # il routing sta nel file provider (traefik/config/services/anki-studio.yml)
+            - "traefik.enable=false"
+        logging: *default-logging
+
+secrets:
+    anki_api_token:
+        file: ./.secrets/anki_api_token.txt

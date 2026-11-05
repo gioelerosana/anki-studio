@@ -1,0 +1,49 @@
+# Routing di Anki Studio (file provider di Traefik), da copiare in
+# /home/ubuntu/stack/traefik/config/services/anki-studio.yml.
+# Dopo: docker compose down traefik && docker compose up -d traefik
+#
+# Niente forward-auth di Authentik: la PWA installata su iPad e le sue chiamate /api
+# non seguirebbero il redirect di login (come per Hermes Desktop). L'accesso è protetto
+# dal token dell'app, con il rate limit per IP del backend.
+http:
+  routers:
+    anki-studio-router:
+      rule: "Host(`anki.jshep.xyz`)"
+      entryPoints:
+        - websecure
+      service: anki-studio-service
+      middlewares:
+        - securityHeaders@file
+        - compress@file
+      tls:
+        certResolver: cloudflare
+        domains:
+          - main: "jshep.xyz"
+            sans:
+              - "*.jshep.xyz"
+
+    # Login AnkiWeb: limite di Traefik sulle POST con credenziali, come per gli altri
+    # servizi (02-routing-traefik.md). Il backend ha comunque il suo limite.
+    anki-studio-login-router:
+      rule: "Host(`anki.jshep.xyz`) && Method(`POST`) && Path(`/api/sync/login`)"
+      priority: 50
+      entryPoints:
+        - websecure
+      service: anki-studio-service
+      middlewares:
+        - loginRateLimit@file
+        - securityHeaders@file
+        - compress@file
+      tls:
+        certResolver: cloudflare
+        domains:
+          - main: "jshep.xyz"
+            sans:
+              - "*.jshep.xyz"
+
+  services:
+    anki-studio-service:
+      loadBalancer:
+        servers:
+          - url: "http://anki-studio:8000"
+        passHostHeader: true
