@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# backend
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# segreti e dati: la collezione Anki e le credenziali AnkiWeb non vanno MAI nel repo
+.env
+data/
+backend/data/

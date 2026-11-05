@@ -1,0 +1,41 @@
+# Stack di Anki Studio: PWA (nginx) + API (FastAPI + motore Anki).
+#
+#   cp .env.example .env   # imposta ANKI_API_TOKEN
+#   docker compose up -d --build
+#
+# Esposizione su internet: la gestisce il Traefik dello stack principale, che va
+# collegato al servizio `web` (porta 80). Qui `web` è pubblicato solo su localhost
+# per i test; l'API non è mai esposta direttamente.
+name: anki-studio
+
+services:
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ANKI_DATA_DIR: /data
+    volumes:
+      # collezione, media e chiave di sync AnkiWeb. Backup: vedi README.
+      - anki-data:/data
+    stop_grace_period: 60s   # tempo per l'ultima sync con AnkiWeb allo spegnimento
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  anki-data:

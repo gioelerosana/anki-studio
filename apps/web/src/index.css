@@ -1,0 +1,23 @@
+@import '@anki-studio/ui-kit/theme.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* iPad: niente rimbalzo della pagina né zoom da doppio tap durante lo studio. */
+html,
+body {
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Impostazioni > Riduci animazioni: la classe vince sulla preferenza di sistema. */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}

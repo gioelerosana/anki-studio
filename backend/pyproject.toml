@@ -1,0 +1,17 @@
+[project]
+name = "anki-pwa-backend"
+version = "0.1.0"
+description = "Backend FastAPI che espone una collezione Anki sincronizzata con AnkiWeb, pensato per una PWA su iPad."
+requires-python = ">=3.10"
+dependencies = [
+    "anki==26.9.4",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

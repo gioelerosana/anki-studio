@@ -1,0 +1,17 @@
+{
+  "name": "Anki Studio",
+  "short_name": "Anki Studio",
+  "description": "Studia le tue flashcard Anki con un'interfaccia pulita, pensata per iPad.",
+  "lang": "it",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#252525",
+  "theme_color": "#252525",
+  "icons": [
+    { "src": "/icon-256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

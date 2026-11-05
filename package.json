@@ -1,0 +1,16 @@
+{
+  "name": "anki-studio-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @anki-studio/web dev",
+    "build": "pnpm --filter @anki-studio/web build",
+    "typecheck": "pnpm -r typecheck",
+    "dev:api": "cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --port 8000",
+    "test:api": "cd backend && .venv/bin/python -m pytest -q"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

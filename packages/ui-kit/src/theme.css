@@ -1,0 +1,282 @@
+/*
+ * Token di Anki Studio, derivati dal design system "T3 Code" (lo stesso di XMap Studio).
+ *
+ * Perché qui e non in Tailwind: i valori cambiano col tema (classe `.dark` su
+ * <html>) e devono essere leggibili anche da SVG inline e dal processo
+ * Electron. Tailwind (apps/web/tailwind.config.js) espone solo alias verso
+ * queste variabili: ogni colore dell'interfaccia passa da qui.
+ * Regole d'uso in docs/DESIGN-SYSTEM.md.
+ */
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --background: oklch(0.992 0 0);
+    --foreground: oklch(0.274 0.006 286.033);
+    --card: #ffffff;
+    --card-foreground: var(--foreground);
+    --popover: #ffffff;
+    --popover-foreground: var(--foreground);
+    --primary: oklch(0.488 0.217 264);
+    --primary-foreground: #ffffff;
+    --secondary: oklch(0.985 0 0);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0.967 0.001 286.375);
+    --muted-foreground: oklch(0.552 0.016 285.938);
+    --accent: oklch(0.967 0.001 286.375);
+    --accent-foreground: oklch(0.21 0.006 285.885);
+    --border: oklch(0.92 0.004 286.32);
+    --input: oklch(0.871 0.006 286.286);
+    --ring: var(--primary);
+
+    --error: oklch(0.637 0.237 25.331);
+    --error-foreground: oklch(0.505 0.213 27.518);
+    --info: oklch(0.623 0.214 259.815);
+    --info-foreground: oklch(0.488 0.243 264.376);
+    --success: oklch(0.696 0.17 162.48);
+    --success-foreground: oklch(0.508 0.118 165.612);
+    --warning: oklch(0.769 0.188 70.08);
+    --warning-foreground: oklch(0.555 0.163 48.998);
+
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-control-surface: oklch(0.967 0.001 286.375);
+    --sidebar-row-active: #ffffff;
+
+    /* Tinte di stato: 8% in chiaro, 16% in scuro (README T3 "Status is tinted"). */
+    --tint-strength: 8%;
+
+    /* Inchiostro del marchio (icona, AppMark). */
+    --brand-ink: oklch(0.21 0.006 285.885);
+    --brand-ink-foreground: #ffffff;
+
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --control-radius: 0.5rem;
+    --radius: 0.625rem;
+    --radius-xl: 14px;
+    --radius-2xl: 18px;
+
+    --shadow-composer: 0 12px 28px -18px rgba(0, 0, 0, 0.4);
+    --shadow-dialog: 0 24px 64px -24px rgba(0, 0, 0, 0.65);
+    --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --inset-shadow-control-highlight: inset 0 1px rgba(255, 255, 255, 0.16);
+    --inset-shadow-control-pressed: inset 0 1px rgba(0, 0, 0, 0.08);
+
+    --opacity-disabled: 0.64;
+    --glass-opacity: 80%;
+    --glass-blur: 12px;
+    --ease-out-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+
+    --topbar-height: 48px;
+    --sidebar-width: 17.5rem;
+    --inspector-width: 22rem;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Cantarell, Ubuntu,
+      sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono',
+      monospace;
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.97 0 0);
+    --card: #111111;
+    --popover: #111111;
+    --primary: oklch(0.571 0.21 264);
+    --secondary: rgba(255, 255, 255, 0.03);
+    --muted: rgba(255, 255, 255, 0.05);
+    --muted-foreground: #8a8a8a;
+    --accent: rgba(255, 255, 255, 0.05);
+    --accent-foreground: oklch(0.97 0 0);
+    --border: rgba(255, 255, 255, 0.07);
+    --input: rgba(255, 255, 255, 0.1);
+
+    --error: #fb414a;
+    --error-foreground: oklch(0.704 0.191 22.216);
+    --info-foreground: oklch(0.707 0.165 254.624);
+    --success-foreground: oklch(0.765 0.177 163.223);
+    --warning-foreground: oklch(0.828 0.189 84.429);
+
+    --sidebar: #0d0d0d;
+    --sidebar-control-surface: rgba(255, 255, 255, 0.03);
+    --sidebar-row-active: rgba(255, 255, 255, 0.06);
+
+    --tint-strength: 16%;
+
+    --brand-ink: oklch(0.97 0 0);
+    --brand-ink-foreground: oklch(0.145 0 0);
+
+    --shadow-composer: 0 14px 32px -18px rgba(0, 0, 0, 0.75);
+    --shadow-dialog: inset 0 1px rgba(255, 255, 255, 0.04), 0 24px 72px -20px rgba(0, 0, 0, 0.9);
+    --shadow-control: none;
+    --glass-blur: 16px;
+  }
+
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--primary) 24%, transparent);
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Regioni trascinabili (eredità di XMap Studio/Electron): innocue nel browser. */
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+.app-no-drag,
+.app-drag-region button,
+.app-drag-region input,
+.app-drag-region [role='menu'] {
+  -webkit-app-region: no-drag;
+}
+
+/* Superfici in vetro: menu, tooltip, toolbar flottanti (i dialog sono opachi) (README T3 "Shape and elevation"). */
+.surface-glass {
+  background-color: color-mix(in oklab, var(--popover) var(--glass-opacity), transparent);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* Drag & drop nell'albero laterale. */
+.drop-into {
+  background-color: color-mix(in oklab, var(--primary) var(--tint-strength), transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.drop-before {
+  box-shadow: inset 0 2px 0 0 var(--primary);
+}
+.drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--primary);
+}
+
+/* Anteprima formula: sfondo fisso perché MathJax rende in un solo colore. */
+.eq-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 12px 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--card);
+}
+/* Le formule lunghe si riducono per stare nel riquadro invece di essere tagliate. */
+.eq-preview svg,
+.eq-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Scrollbar sottili (app-scrollbar-width 6px). */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--foreground) 24%, transparent);
+}
+
+@keyframes xm-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes xm-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@keyframes xm-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+.animate-fade-in {
+  animation: xm-fade-in 160ms ease-out both;
+}
+.animate-pop-in {
+  animation: xm-pop-in 180ms var(--ease-out-sheet) both;
+}
+.animate-slide-in-right {
+  animation: xm-slide-in-right 220ms var(--ease-out-sheet) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/*
+ * Touch (iPad, telefono): area di tocco >= 40px per i controlli della barra
+ * superiore e delle voci di menu. Su desktop (puntatore fine) non cambia nulla.
+ */
+@media (pointer: coarse) {
+  .app-header button:not([role='radio']),
+  .app-header [role='menuitem'] {
+    min-height: 40px;
+    min-width: 40px;
+  }
+  .app-header [role='menuitem'] {
+    min-width: 0;
+  }
+  .app-header [role='radiogroup'] {
+    height: 40px;
+  }
+}
