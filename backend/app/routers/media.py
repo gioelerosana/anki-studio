@@ -6,8 +6,9 @@ from fastapi.responses import FileResponse
 
 from ..collection import CollectionManager
 from ..deps import get_manager
+from ..security import require_token_or_media_cookie
 
-router = APIRouter(tags=["media"])
+router = APIRouter(tags=["media"], dependencies=[Depends(require_token_or_media_cookie)])
 
 
 @router.get("/media/{filename}")

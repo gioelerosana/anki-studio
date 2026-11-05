@@ -103,10 +103,32 @@ class FullSyncIn(BaseModel):
 
 
 class SyncResultOut(BaseModel):
-    outcome: str
+    outcome: Literal[
+        "no_changes",
+        "synced",
+        "full_download",
+        "full_upload",
+        "full_sync_required",
+        "not_logged_in",
+        "error",
+    ]
     finished_at: float
     server_message: str = ""
     error: str | None = None
+    # network = offline/timeout (si riprova da sola), auth = serve un nuovo login,
+    # server = AnkiWeb ha rifiutato, refused = bloccata per non perdere dati
+    error_kind: Literal["network", "auth", "server", "refused", "other"] | None = None
+
+
+class SyncProgress(BaseModel):
+    kind: Literal["full_sync", "normal_sync"]
+    # full_sync: byte trasferiti / totali (total può essere 0 finché non è noto)
+    transferred: int | None = None
+    total: int | None = None
+    # normal_sync: testi già tradotti da Anki
+    stage: str | None = None
+    added: str | None = None
+    removed: str | None = None
 
 
 class SyncStatusOut(BaseModel):
@@ -114,6 +136,18 @@ class SyncStatusOut(BaseModel):
     username: str | None
     last_result: SyncResultOut | None
     media: dict
+    # sync in corso: "normal", "full_upload", "full_download" oppure null
+    running: Literal["normal", "full_upload", "full_download"] | None = None
+    running_since: float | None = None
+    progress: SyncProgress | None = None
+    # l'ultima sync ha trovato un conflitto: serve /sync/full (la sync automatica non lo risolve)
+    full_sync_required: bool = False
+    # server di sync configurato (null = AnkiWeb)
+    endpoint: str | None = None
+    # la chiave salvata è di un altro server: serve un nuovo login
+    endpoint_mismatch: bool = False
+    next_auto_sync_at: float | None = None
+    auto_sync_failures: int = 0
 
 
 class TodayStats(BaseModel):

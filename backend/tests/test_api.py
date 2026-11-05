@@ -106,12 +106,18 @@ def test_media(client: TestClient):
 def test_media_with_cookie(client: TestClient):
     token = client.headers.pop("Authorization")
     assert client.get("/api/media/pic.png").status_code == 401
-    client.headers["Authorization"] = token
-    client.post("/api/auth/session")
-    client.headers.pop("Authorization")
-    # TestClient usa http://testserver: il cookie è "secure", lo rimandiamo a mano
-    r = client.get("/api/media/pic.png", cookies={"anki_token": token.split()[1]})
-    assert r.status_code == 200
+    r = client.post("/api/auth/session", headers={"Authorization": token})
+    assert r.status_code == 204
+    set_cookie = r.headers["set-cookie"]
+    assert "Path=/api/media" in set_cookie and "HttpOnly" in set_cookie
+    assert "Secure" in set_cookie and "SameSite=strict" in set_cookie
+    value = set_cookie.split("anki_media=")[1].split(";")[0]
+    # il cookie non è il token e apre solo i media
+    assert value != token.split()[1]
+    client.cookies.set("anki_media", value)
+    assert client.get("/api/media/pic.png").status_code == 200
+    assert client.get("/api/decks").status_code == 401
+    client.cookies.clear()
 
 
 def test_sync_not_logged_in(client: TestClient):
