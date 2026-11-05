@@ -18,7 +18,13 @@ export function App() {
   const { settings } = useSettings();
   return (
     <ToastProvider>
-      <div className="flex h-full flex-col bg-background text-foreground">
+      <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
+        {/* Striscia opaca sotto la status bar. Su iPadOS 26 la PWA installata disegna comunque
+            il contenuto sotto la barra (lo stile "default" non basta) e il sistema ci mette
+            sopra una sfumatura. WebKit la sostituisce con un colore pieno solo se in cima c'è un
+            elemento fixed, largo quanto la vista e con uno sfondo opaco: questo, in ogni schermata.
+            Altezza 0 fuori dalla PWA (nessuna safe area), quindi nel browser non si vede. */}
+        <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-[env(safe-area-inset-top)] bg-background" />
         {settings.apiToken ? (
           <SyncProvider>
             <Connected />

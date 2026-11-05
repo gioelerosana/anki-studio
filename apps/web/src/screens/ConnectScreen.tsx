@@ -25,7 +25,7 @@ export function ConnectScreen() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center p-6">
+    <main className="flex flex-1 items-center justify-center p-6 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <Card className="w-full max-w-sm p-6">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
