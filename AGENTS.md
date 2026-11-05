@@ -99,5 +99,5 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Immagine Docker unica (PWA servita da FastAPI), multi-arch, hardening, versione in `/api/health`
 - [x] CI su GitHub Actions e pubblicazione su GHCR ai tag `vX.Y.Z`
 - [x] Proposta per lo stack (`deploy/stack/`) con script di auto-update controllato
-- [ ] Repository GitHub, primo tag e package GHCR (pubblico o pull privato) — passi nel README, "Pubblicazione"
+- [x] Repository GitHub, primo tag (`v26.0.1`, numerazione `vAA.V.M`) e package GHCR pubblico — README, "Pubblicazione"
 - [ ] Integrazione nello stack e migrazione dei dati dal deploy di prova (`deploy/stack/README.md`)

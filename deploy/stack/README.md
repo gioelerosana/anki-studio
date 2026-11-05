@@ -10,8 +10,8 @@ seguendo le regole dello stack (`AGENTS.md`, `docs/infrastructure/04-maintenance
 | `traefik/config/services/anki-studio.yml` | `traefik/config/services/anki-studio.yml` |
 | `scripts/update-anki-studio.sh` | `scripts/update-anki-studio.sh` (facoltativo, auto-update controllato) |
 
-Segnaposto da sostituire: il digest `sha256:000…` (lo scrive la CI nel riepilogo della release)
-e, se serve, il sottodominio `anki.jshep.xyz`. L'owner è già `gioelerosana`.
+Il Compose è già pinnato a `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0f84ee26…` (release
+`v26.0.1`, indice multi-arch). Da adattare solo, se serve, il sottodominio `anki.jshep.xyz`.
 
 ## Cosa rispetta già
 

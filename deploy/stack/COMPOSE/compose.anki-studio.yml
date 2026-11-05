@@ -15,7 +15,7 @@ x-logging: &default-logging
 
 services:
     anki-studio:
-        image: ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        image: ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0f84ee260dfc6fc9daaf2cf55691bfba51be93584f25f2bf6f02041a315b7580
         container_name: anki-studio
         hostname: anki-studio
         restart: always
