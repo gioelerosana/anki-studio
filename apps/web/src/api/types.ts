@@ -137,3 +137,63 @@ export interface TodayStats {
   again: number;
   summary: string;
 }
+
+export interface NoteSearchItem {
+  id: number;
+  notetype_id: number;
+  notetype_name: string;
+  /** Campo di ordinamento senza HTML (di solito il primo campo). */
+  sort_field: string;
+  tags: string[];
+  card_ids: number[];
+  /** Mazzo della prima carta della nota. */
+  deck_name: string | null;
+  /** Ultima modifica, secondi epoch. */
+  modified: number;
+}
+
+export interface NoteSearchResult {
+  total: number;
+  offset: number;
+  notes: NoteSearchItem[];
+}
+
+export interface CardCounts {
+  new: number;
+  learning: number;
+  /** In ripasso con intervallo < 21 giorni. */
+  young: number;
+  /** In ripasso con intervallo ≥ 21 giorni. */
+  mature: number;
+  suspended: number;
+  buried: number;
+  total: number;
+}
+
+export interface Stats {
+  cards: CardCounts;
+  /** Un elemento per giorno, dal più vecchio a oggi (`day` 0 = oggi, -1 = ieri…). */
+  reviews: { day: number; reviews: number; again: number; seconds: number }[];
+  /** Quota di ripassi con risposta diversa da "Di nuovo" nel periodo; null se non ce ne sono. */
+  retention: number | null;
+  /** Carte da ripassare nei prossimi 7 giorni (`day` 0 = oggi, scadute comprese). */
+  forecast: { day: number; due: number }[];
+  generated_at: number;
+}
+
+export interface DeckOptions {
+  deck_id: number;
+  deck_name: string;
+  filtered: boolean;
+  preset_id: number | null;
+  preset_name: string | null;
+  new_per_day: number | null;
+  reviews_per_day: number | null;
+  learn_steps_min: number[];
+  relearn_steps_min: number[];
+  max_answer_seconds: number | null;
+  bury_new_siblings: boolean;
+  bury_review_siblings: boolean;
+  fsrs: boolean;
+  desired_retention: number | null;
+}

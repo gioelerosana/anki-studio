@@ -5,6 +5,9 @@
 import { getSettings } from '../settings';
 import type {
   DeckNode,
+  DeckOptions,
+  NoteSearchResult,
+  Stats,
   Note,
   Notetype,
   Rating,
@@ -81,6 +84,23 @@ export const api = {
   note: (id: number) => request<Note>('GET', `/notes/${id}`),
   updateNote: (id: number, patch: { fields?: Record<string, string>; tags?: string[] }) =>
     request<Note>('PATCH', `/notes/${id}`, patch),
+
+  /** Ricerca con la sintassi di Anki (`deck:… tag:… is:due`), dalla nota modificata più di recente. */
+  searchNotes: (q: string, limit = 50, offset = 0) =>
+    request<NoteSearchResult>(
+      'GET',
+      `/search/notes?${new URLSearchParams({ q, limit: String(limit), offset: String(offset) })}`,
+    ),
+  tags: () => request<string[]>('GET', '/tags'),
+  stats: (deckId?: number, days = 30) =>
+    request<Stats>(
+      'GET',
+      `/stats?${new URLSearchParams({ days: String(days), ...(deckId !== undefined ? { deck_id: String(deckId) } : {}) })}`,
+    ),
+  deckOptions: (deckId: number) => request<DeckOptions>('GET', `/decks/${deckId}/options`),
+  /** "Studia altre N carte oggi" sul mazzo; risponde con la carta successiva. */
+  extendLimits: (deckId: number, extra: { new?: number; review?: number }) =>
+    request<StudyState>('POST', `/decks/${deckId}/extend-limits`, extra),
 
   syncStatus: () => request<SyncStatus>('GET', '/sync'),
   syncLogin: (username: string, password: string) => request<void>('POST', '/sync/login', { username, password }),

@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
 from .logging_setup import register_secret, setup_logging
-from .routers import auth, decks, media, notes, study, sync
+from .routers import auth, browse, decks, media, notes, study, sync
 from .security import RateLimiter, require_token, security_headers
 from .sync import SyncService, next_auto_delay
 
@@ -194,7 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True, "collection": state, "syncing": syncing is not None}
 
     protected = [Depends(require_token)]
-    for r in (decks.router, study.router, notes.router, sync.router):
+    for r in (decks.router, study.router, notes.router, browse.router, sync.router):
         app.include_router(r, prefix="/api", dependencies=protected)
     # i media accettano anche il cookie, le sessioni gestiscono da sé l'autenticazione
     app.include_router(media.router, prefix="/api")

@@ -167,3 +167,80 @@ class TodayStats(BaseModel):
     seconds: int
     again: int
     summary: str
+
+
+class NoteSearchItem(BaseModel):
+    id: int
+    notetype_id: int
+    notetype_name: str
+    # campo di ordinamento senza HTML (di solito il primo campo)
+    sort_field: str
+    tags: list[str]
+    card_ids: list[int]
+    # mazzo della prima carta della nota
+    deck_name: str | None
+    # ultima modifica, secondi epoch
+    modified: int
+
+
+class NoteSearchOut(BaseModel):
+    total: int
+    offset: int
+    notes: list[NoteSearchItem]
+
+
+class CardCounts(BaseModel):
+    new: int
+    learning: int
+    # in ripasso con intervallo < 21 giorni / >= 21 giorni (come le statistiche di Anki)
+    young: int
+    mature: int
+    suspended: int
+    buried: int
+    total: int
+
+
+class DayReviews(BaseModel):
+    # 0 = oggi, -1 = ieri, … (giorni di Anki: rispettano l'ora del cambio giorno)
+    day: int
+    reviews: int
+    again: int
+    seconds: int
+
+
+class DayForecast(BaseModel):
+    # 0 = oggi (comprese le scadute), 1 = domani, …
+    day: int
+    due: int
+
+
+class StatsOut(BaseModel):
+    cards: CardCounts
+    reviews: list[DayReviews]
+    # quota di ripassi (non nuove né apprendimento) con risposta diversa da "Di nuovo"
+    retention: float | None
+    forecast: list[DayForecast]
+    generated_at: float
+
+
+class DeckOptions(BaseModel):
+    deck_id: int
+    deck_name: str
+    filtered: bool
+    preset_id: int | None = None
+    preset_name: str | None = None
+    new_per_day: int | None = None
+    reviews_per_day: int | None = None
+    learn_steps_min: list[float] = []
+    relearn_steps_min: list[float] = []
+    max_answer_seconds: int | None = None
+    bury_new_siblings: bool = False
+    bury_review_siblings: bool = False
+    fsrs: bool = False
+    desired_retention: float | None = None
+
+
+class ExtendLimitsIn(BaseModel):
+    # carte in più per oggi (anche negative per toglierne)
+    new: int = Field(0, ge=-9999, le=9999)
+    review: int = Field(0, ge=-9999, le=9999)
