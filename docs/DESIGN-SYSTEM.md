@@ -148,7 +148,8 @@ separatori `Separator` con `my-1`. `danger` → `text-error-foreground`, hover
 ### `Toast`, `ToastContainer`
 Stessa API. Card `bg-popover border rounded-lg shadow-composer`, icona di stato
 colorata `*-foreground`, testo `text-sm`, entrata `animate-pop-in`, in basso a
-destra.
+destra. `ToastContainer` accetta `className` per spostarli: Anki Studio li mette
+in alto a destra sotto la barra, perché in basso ci sono i pulsanti di risposta.
 
 ### `HeaderBar`
 Altezza `h-topbar` (+ safe area iPad), `bg-background`, `border-b`, regione
@@ -178,3 +179,15 @@ Icona `Loader2` animata, `size-4`.
 - **Tocco**: tap sulla carta = mostra risposta; scorciatoie da tastiera (Spazio, 1–4)
   per la Magic Keyboard. Nessuna animazione oltre `fade-in`/`pop-in`; rispetta
   «Riduci animazioni».
+- **Prima della risposta** un solo pulsante largo «Mostra risposta» (`primary`: in quel
+  momento è l'unica azione). Stessa altezza della fila di risposta, così il pollice non
+  si sposta.
+- **Modalità notte**: la carta riceve `nightMode night_mode` come in Anki. Se il CSS del
+  tipo di nota non dà uno sfondo per la notte, sfondo e testo li prende l'app
+  (`--card`, `--card-foreground`): una carta bianca non resta bianca in scuro.
+- **Formule** `\( \)` e `\[ \]`: MathJax con uscita SVG (come XMap Studio), in
+  `currentColor`, caricato solo se la carta ne contiene.
+- **Flag**: i sette colori di Anki sono token `--flag-1` … `--flag-7` (`theme.css`); sono
+  dati della carta, si usano solo per il pallino nella barra e nel dialog «Flag».
+- **Contatori in barra**: su iPad stanno a destra nella barra; sotto `sm` (telefono) vanno
+  in un angolo della carta per lasciare spazio al titolo.

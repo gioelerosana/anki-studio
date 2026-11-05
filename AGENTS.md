@@ -59,13 +59,14 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 
 **Web (`apps/web`)**
 - [x] Collegamento con token, elenco mazzi, sync manuale
-- [ ] Studio a tutto schermo: carta isolata, tap per girare, 4 pulsanti, tastiera (Spazio, 1–4), undo
-- [ ] Audio e TTS (`question_av`/`answer_av`, `autoplay`), pulsanti `.anki-play`
-- [ ] Azioni sulla carta: seppellisci, sospendi, flag, modifica nota
-- [ ] Aggiunta carte (tipo di nota, mazzo, campi, tag)
-- [ ] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
-- [ ] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
+- [x] Studio a tutto schermo: carta isolata, tap per girare, 4 pulsanti, tastiera (Spazio, 1–4), undo
+- [x] Audio e TTS (`question_av`/`answer_av`, `autoplay`), pulsanti `.anki-play`
+- [x] Azioni sulla carta: seppellisci, sospendi, flag, modifica nota
+- [x] Aggiunta carte (tipo di nota, mazzo, campi, tag)
+- [x] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
+- [x] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
 - [ ] Test su iPad reale come PWA installata (offline della shell, safe area, tastiera)
+- [ ] Risposta scritta `{{type:…}}` e altre richieste al backend in [`docs/REQUESTS-WEB-TO-API.md`](docs/REQUESTS-WEB-TO-API.md)
 
 **Backend (`backend`)**
 - [x] Sync AnkiWeb (normale, full, media), studio, note, media, token
