@@ -70,8 +70,12 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 
 **Backend (`backend`)**
 - [x] Sync AnkiWeb (normale, full, media), studio, note, media, token
-- [ ] Test della sync contro un server di sync locale (`anki` include un sync server) invece che AnkiWeb
-- [ ] Robustezza: sync in background senza bloccare lo studio, retry, stato "sync in corso"
-- [ ] Endpoint mancanti per la PWA (es. ricerca/browser, statistiche, opzioni mazzo)
-- [ ] Sicurezza: rate limit sul login, header di sicurezza, log senza segreti
-- [ ] Healthcheck significativo, logging strutturato, backup del volume dati
+- [x] Script di seed per lo sviluppo (`backend/scripts/seed_dev.py`)
+- [x] Test della sync contro un server di sync locale (`tests/test_sync_e2e.py`, `ANKI_SYNC_ENDPOINT`)
+- [x] Robustezza: sync in background senza bloccare lo studio, retry, stato "sync in corso"
+- [x] Endpoint mancanti per la PWA (ricerca note, tag, statistiche, opzioni mazzo, risposta digitata)
+- [x] Sicurezza: rate limit su token e login, header di sicurezza, log senza segreti, proxy headers
+- [x] Healthcheck significativo, logging strutturato, backup automatici e del volume dati
+- [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
+- [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
+- [ ] Modifica delle opzioni del mazzo dalla PWA (oggi sola lettura)

@@ -18,7 +18,7 @@ _secrets_lock = threading.Lock()
 _MASK = "***"
 
 # attributi standard di LogRecord: tutto il resto è un campo "extra" da includere nel JSON
-_STD_ATTRS = set(vars(logging.makeLogRecord({}))) | {"message", "asctime", "taskName"}
+_STD_ATTRS = set(vars(logging.makeLogRecord({}))) | {"message", "asctime", "taskName", "color_message"}
 
 
 def register_secret(value: str | None) -> None:
