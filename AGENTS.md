@@ -45,11 +45,14 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
 1. **Nessun dato perso.** Non sovrascrivere mai la collezione AnkiWeb o quella del server
    senza una scelta esplicita dell'utente (`/sync/full` solo dopo conferma in UI).
 2. **Segreti fuori dal repo.** `.env`, `data/`, `backend/data/` sono ignorati. Mai
-   loggare password AnkiWeb, `hkey` o `ANKI_API_TOKEN`.
+   loggare password AnkiWeb, `hkey`, client secret OIDC o `ANKI_API_TOKEN`.
 3. **Il contenuto delle carte è isolato** (Shadow DOM o iframe): il CSS dei tipi di nota
    non tocca l'app e viceversa. L'HTML delle carte viene dalla collezione dell'utente:
    non eseguire script delle carte nel contesto dell'app.
 4. **Lo scheduler è quello di Anki.** Niente calcoli di intervalli lato client.
+5. **Accesso solo con Authentik (OIDC).** La PWA non chiede né tiene token: il backend fa il
+   login (client confidenziale, `app/oidc.py`) e la sessione è un cookie HttpOnly. Niente
+   token in `localStorage`, niente bypass dell'accesso fuori da `ANKI_DEV_LOGIN` (solo sviluppo).
 
 ## Controlli prima di ogni commit
 
@@ -73,7 +76,7 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 ## Roadmap
 
 **Web (`apps/web`)**
-- [x] Collegamento con token, elenco mazzi, sync manuale
+- [x] Accesso con Authentik (OIDC) senza token da inserire, elenco mazzi, sync manuale
 - [x] Studio a tutto schermo: carta isolata, tap per girare, 4 pulsanti, tastiera (Spazio, 1–4), undo
 - [x] Audio e TTS (`question_av`/`answer_av`, `autoplay`), pulsanti `.anki-play`
 - [x] Azioni sulla carta: seppellisci, sospendi, flag, modifica nota
@@ -90,6 +93,7 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Robustezza: sync in background senza bloccare lo studio, retry, stato "sync in corso"
 - [x] Endpoint mancanti per la PWA (ricerca note, tag, statistiche, opzioni mazzo, risposta digitata)
 - [x] Sicurezza: rate limit su token e login, header di sicurezza, log senza segreti, proxy headers
+- [x] Login OIDC con Authentik (Authorization Code + PKCE, sessione in cookie HttpOnly, CSRF)
 - [x] Healthcheck significativo, logging strutturato, backup automatici e del volume dati
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
@@ -101,3 +105,5 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Proposta per lo stack (`deploy/stack/`) con script di auto-update controllato
 - [x] Repository GitHub, primo tag (`v26.0.1`, numerazione `vAA.V.M`) e package GHCR pubblico — README, "Pubblicazione"
 - [ ] Integrazione nello stack e migrazione dei dati dal deploy di prova (`deploy/stack/README.md`)
+- [ ] Blueprint Authentik applicato (`deploy/stack/auth/blueprints/anki-studio-oidc.yaml`) e login
+      provato sulla PWA installata su iPad

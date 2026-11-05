@@ -3,8 +3,10 @@
 # Dopo: docker compose down traefik && docker compose up -d traefik
 #
 # Niente forward-auth di Authentik: la PWA installata su iPad e le sue chiamate /api
-# non seguirebbero il redirect di login (come per Hermes Desktop). L'accesso è protetto
-# dal token dell'app, con il rate limit per IP del backend.
+# non seguirebbero il redirect di login (come per Hermes Desktop). L'integrazione con
+# Authentik è OIDC nell'app (auth/blueprints/anki-studio-oidc.yaml): il backend fa il
+# login e tiene la sessione in un cookie HttpOnly; senza sessione /api/* risponde 401.
+# Pubblici restano solo la shell statica della PWA (nessun dato) e /api/health.
 http:
   routers:
     anki-studio-router:

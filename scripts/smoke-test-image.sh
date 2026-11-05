@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Avvio di prova dell'immagine con lo stesso hardening previsto nello stack:
-# read_only + tmpfs, cap_drop ALL, no-new-privileges, utente non root, token come
-# Docker secret (ANKI_API_TOKEN_FILE). Controlla healthcheck, PWA, header, token,
-# confine /api e spegnimento pulito (sync finale + collezione chiusa).
+# read_only + tmpfs, cap_drop ALL, no-new-privileges, utente non root, segreti come
+# Docker secret (client secret OIDC e token per gli script). Controlla healthcheck, PWA,
+# header, accesso (sessione OIDC e token), confine /api e spegnimento pulito (sync finale
+# + collezione chiusa). L'issuer OIDC è finto (.invalid): il login deve fallire con garbo.
 #
 #   scripts/smoke-test-image.sh anki-studio:local            # porta 18080
 #   PORT=18181 scripts/smoke-test-image.sh ghcr.io/gioelerosana/anki-studio:26.0.1
@@ -42,6 +43,9 @@ header() { # header <nome> <url> [curl args]: valore dell'header della risposta 
 python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "$TMP/token"
 chmod 444 "$TMP/token"
 TOKEN=$(cat "$TMP/token")
+python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "$TMP/oidc"
+chmod 444 "$TMP/oidc"
+OIDC_SECRET=$(cat "$TMP/oidc")
 
 # rete dedicata: su myserv il bridge di default è disattivato ("bridge": "none")
 docker network create "$NAME" >/dev/null
@@ -52,8 +56,13 @@ docker run -d --name "$NAME" --network "$NAME" \
     --pids-limit 256 --memory 1g \
     --stop-timeout 120 \
     -e ANKI_API_TOKEN_FILE=/run/secrets/anki_api_token \
+    -e ANKI_PUBLIC_URL="$BASE" \
+    -e ANKI_OIDC_ISSUER=https://auth.invalid/application/o/anki-studio/ \
+    -e ANKI_OIDC_CLIENT_ID=anki-studio \
+    -e ANKI_OIDC_CLIENT_SECRET_FILE=/run/secrets/anki_oidc_client_secret \
     -e ANKI_SYNC_ON_STARTUP=false -e ANKI_AUTO_SYNC_MINUTES=0 \
     -v "$TMP/token:/run/secrets/anki_api_token:ro" \
+    -v "$TMP/oidc:/run/secrets/anki_oidc_client_secret:ro" \
     -v "$NAME-data:/data" \
     "$IMAGE" >/dev/null
 
@@ -105,7 +114,15 @@ HEALTH_JSON=$(curl -s "$BASE/api/health")
 echo "     /api/health: $HEALTH_JSON"
 python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d["ok"] and d["version"] else 1)' "$HEALTH_JSON" \
     && ok "/api/health ok con la versione" || ko "/api/health"
-check "/api/decks senza token 401" 401 "$(status "$BASE/api/decks")"
+check "/api/decks senza sessione 401" 401 "$(status "$BASE/api/decks")"
+check "/api/auth/me senza sessione 401" 401 "$(status "$BASE/api/auth/me")"
+check "/api/media senza sessione 401" 401 "$(status "$BASE/api/media/x.png")"
+check "login con Authentik irraggiungibile torna alla PWA" "/?auth_error=unreachable" \
+    "$(header Location "$BASE/api/auth/login")"
+check "callback senza login in corso" "/?auth_error=expired" \
+    "$(header Location "$BASE/api/auth/callback?code=x&state=y")"
+check "next fuori dall'app ignorato" "/?auth_error=unreachable" \
+    "$(header Location "$BASE/api/auth/login?next=//evil.test")"
 check "/api/decks con token sbagliato 401" 401 "$(status -H 'Authorization: Bearer sbagliato-sbagliato' "$BASE/api/decks")"
 check "/api/decks con token 200" 200 "$(status -H "Authorization: Bearer $TOKEN" "$BASE/api/decks")"
 check "/api no-store" "no-store" "$(header Cache-Control "$BASE/api/decks" -H "Authorization: Bearer $TOKEN")"
@@ -118,6 +135,7 @@ check "uscita pulita" 0 "$(docker inspect -f '{{.State.ExitCode}}' "$NAME")"
 LOGS=$(docker logs "$NAME" 2>&1)
 echo "$LOGS" | grep -q "Collezione chiusa" && ok "collezione chiusa allo spegnimento" || ko "collezione non chiusa"
 echo "$LOGS" | grep -qF "$TOKEN" && ko "il token compare nei log" || ok "nessun token nei log"
+echo "$LOGS" | grep -qF "$OIDC_SECRET" && ko "il client secret compare nei log" || ok "nessun client secret nei log"
 if docker image inspect "$IMAGE" --format '{{json .Config.Env}}' | grep -qF "$TOKEN"; then ko "token nell'immagine"; fi
 
 echo

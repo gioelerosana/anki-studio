@@ -35,7 +35,11 @@ services:
             retries: 3
             start_period: 30s
         environment:
-            - ANKI_API_TOKEN_FILE=/run/secrets/anki_api_token
+            # Login con Authentik (auth/blueprints/anki-studio-oidc.yaml): la PWA non chiede token.
+            - ANKI_PUBLIC_URL=https://anki.jshep.xyz
+            - ANKI_OIDC_ISSUER=https://auth.jshep.xyz/application/o/anki-studio/
+            - ANKI_OIDC_CLIENT_ID=anki-studio
+            - ANKI_OIDC_CLIENT_SECRET_FILE=/run/secrets/anki_oidc_client_secret
             # Sync automatica con AnkiWeb ogni N minuti, oltre a quella all'avvio e allo stop.
             - ANKI_AUTO_SYNC_MINUTES=10
             - TZ=Europe/Rome
@@ -44,10 +48,11 @@ services:
             # Proprietario 1000:1000, mode 0700. Backrest la legge in sola lettura.
             - ./anki-studio/data:/data
         secrets:
-            - anki_api_token
+            - anki_oidc_client_secret
         networks:
             # rete edge dedicata condivisa solo con Traefik; serve anche l'uscita verso
-            # AnkiWeb (sync.ankiweb.net), quindi non è `internal`.
+            # AnkiWeb (sync.ankiweb.net) e verso auth.jshep.xyz (scambio del codice OIDC),
+            # quindi non è `internal`.
             - edge-anki-studio
         # UID/GID fissi dell'immagine; 1001 è il gid di ubuntu sull'host, che possiede i
         # file 0640 in .secrets/ (come Backrest, n8n, Open Terminal...).
@@ -68,5 +73,5 @@ services:
         logging: *default-logging
 
 secrets:
-    anki_api_token:
-        file: ./.secrets/anki_api_token.txt
+    anki_oidc_client_secret:
+        file: ./.secrets/anki_oidc_client_secret.txt
