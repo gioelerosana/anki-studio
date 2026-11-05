@@ -26,6 +26,23 @@ ANKI_API_TOKEN=un-token-lungo-almeno-16 ANKI_DATA_DIR=./data \
 
 Documentazione interattiva: `http://localhost:8000/docs`
 
+### Collezione di prova
+
+Per sviluppare la PWA senza un account AnkiWeb:
+
+```bash
+.venv/bin/python scripts/seed_dev.py           # crea data/collection.anki2
+.venv/bin/python scripts/seed_dev.py --force   # la ricrea (la vecchia va in data/backup-seed-*)
+```
+
+Contiene mazzi annidati (`Lingue::Spagnolo::Verbi`, `Lingue::Inglese::Phrasal verbs`,
+`Scienze::Chimica`, un mazzo vuoto `Archivio`), Basic, Basic con inversa (anche facoltativa),
+risposta da digitare, Cloze, un tipo di nota **Vocabolo** con CSS personalizzato (anche
+`.nightMode`) e TTS nel template, immagini PNG/SVG (una con spazio e accento nel nome),
+audio `[sound:*.wav]`, TTS inline `[anki:tts]`, MathJax, flag e carte in tutte le code:
+nuove, in apprendimento e riapprendimento, da ripassare oggi o in ritardo, future, sospese
+e seppellite. Ferma l'API prima di lanciarlo; senza `--force` non tocca una collezione esistente.
+
 ## Primo collegamento ad AnkiWeb
 
 ```bash
