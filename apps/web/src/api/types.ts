@@ -197,3 +197,14 @@ export interface DeckOptions {
   fsrs: boolean;
   desired_retention: number | null;
 }
+
+/** Utente della sessione (GET /api/auth/me, specchio di `AuthUser`). */
+export interface AuthUser {
+  name: string;
+  username: string | null;
+}
+
+export interface AuthLogout {
+  /** End-session di Authentik: ci si naviga per chiudere anche quella sessione. */
+  logout_url: string | null;
+}

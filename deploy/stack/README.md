@@ -8,6 +8,7 @@ seguendo le regole dello stack (`AGENTS.md`, `docs/infrastructure/04-maintenance
 |---|---|
 | `COMPOSE/compose.anki-studio.yml` | `COMPOSE/compose.anki-studio.yml` + una riga in `include:` di `compose.yml` |
 | `traefik/config/services/anki-studio.yml` | `traefik/config/services/anki-studio.yml` |
+| `auth/blueprints/anki-studio-oidc.yaml` | `auth/blueprints/anki-studio-oidc.yaml` (provider e applicazione Authentik) |
 | `scripts/update-anki-studio.sh` | `scripts/update-anki-studio.sh` (facoltativo, auto-update controllato) |
 
 Il Compose è già pinnato a `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0f84ee26…` (release
@@ -21,8 +22,11 @@ Il Compose è già pinnato a `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0f8
 - **Hardening**: `read_only` con `/tmp` in tmpfs, `cap_drop: ALL` senza `cap_add`,
   `no-new-privileges`, utente `1000:1000` (mai root), `pids_limit`, limiti di memoria e CPU,
   log `json-file` 10m × 3.
-- **Segreto** `ANKI_API_TOKEN` come Docker secret in `.secrets/` (letto con
-  `ANKI_API_TOKEN_FILE`), mai nell'ambiente né nell'immagine.
+- **Accesso con Authentik (OIDC)**, nello stile di LiteLLM: client confidenziale da blueprint,
+  `smart-login-flow` (MFA/passkey), policy deny-by-default per "authentik Admins". La PWA non
+  chiede token: senza sessione si viene portati su Authentik e si torna nell'app.
+- **Segreto** client secret OIDC come Docker secret in `.secrets/` (letto con
+  `ANKI_OIDC_CLIENT_SECRET_FILE`), mai nell'ambiente né nell'immagine.
 - **Spegnimento**: `stop_grace_period: 120s` copre l'ultima sync con AnkiWeb.
 - **Dati** in `./anki-studio/data` (bind mount) sotto Backrest.
 
@@ -52,21 +56,40 @@ a `STACK_NETWORKS` nel `Taskfile.yml` e alla lista delle reti edge in
 L'API si fida di `X-Forwarded-For` solo dalle reti private (`FORWARDED_ALLOW_IPS` nel
 Dockerfile, che include `172.16.0.0/12`): Traefik su `edge-anki-studio` è dentro, i client no.
 
-### 2. Segreto
+### 2. Authentik
+
+Provider OIDC, applicazione `anki-studio` e policy di accesso (solo superuser e "authentik
+Admins") con il blueprint, come per LiteLLM (`docs/infrastructure/03-auth-authentik.md`):
 
 ```bash
 cd /home/ubuntu/stack
-umask 077
-python3 -c "import secrets; print(secrets.token_urlsafe(32), end='')" > .secrets/anki_api_token.txt
-chmod 640 .secrets/anki_api_token.txt     # gid ubuntu: il container lo legge con group_add 1001
+cp …/deploy/stack/auth/blueprints/anki-studio-oidc.yaml auth/blueprints/
+docker exec authentik ak apply_blueprint /blueprints/custom/anki-studio-oidc.yaml
 ```
 
-Per tenere il token del deploy di prova (così la PWA già configurata non chiede niente),
-copia invece il valore di `ANKI_API_TOKEN` da `/home/ubuntu/anki-studio/.env` nello stesso file,
-senza a capo finale. Il token si inserisce nella PWA dalla schermata di collegamento.
+Il blueprint non dichiara il client secret: Authentik lo genera alla prima applicazione.
+Copialo (Admin → Applicazioni → Provider → Anki Studio → Modifica → Client Secret) nel segreto:
 
-Aggiungi anche `.secrets.example/anki_api_token.txt` con un valore segnaposto: `task validate`
-controlla che ogni file di `.secrets.example/` esista in `.secrets/`.
+```bash
+umask 077
+printf '%s' 'IL-CLIENT-SECRET' > .secrets/anki_oidc_client_secret.txt   # senza a capo finale
+chmod 640 .secrets/anki_oidc_client_secret.txt   # gid ubuntu: il container lo legge con group_add 1001
+```
+
+Aggiungi anche `.secrets.example/anki_oidc_client_secret.txt` con un valore segnaposto:
+`task validate` controlla che ogni file di `.secrets.example/` esista in `.secrets/`. Se avevi
+già preparato `.secrets/anki_api_token.txt` (e il suo esempio), toglili: non servono più.
+
+Da sapere:
+
+- **Redirect URI**: `https://anki.jshep.xyz/api/auth/callback`, `strict`. Se cambi sottodominio,
+  cambiala nel blueprint e in `ANKI_PUBLIC_URL`. Per il deploy di prova (Tailscale) aggiungi la
+  sua (`https://<macchina>.<tailnet>.ts.net/api/auth/callback`) come seconda voce.
+- **Uscita verso `auth.jshep.xyz`**: lo scambio del codice parte dal container, come per Open
+  WebUI e LiteLLM. Verifica dopo l'avvio:
+  `docker exec anki-studio python -c "import urllib.request as u; print(u.urlopen('https://auth.jshep.xyz/application/o/anki-studio/.well-known/openid-configuration', timeout=5).status)"` → `200`.
+- **Cambiare il client secret** su Authentik chiude tutte le sessioni della PWA (la chiave dei
+  cookie ne deriva): dopo, aggiorna il file e `docker compose up -d --no-deps anki-studio`.
 
 ### 3. Dati
 
@@ -122,13 +145,16 @@ Aggiorna la tabella dei domini in `docs/infrastructure/02-routing-traefik.md`.
 ```bash
 curl -s https://anki.jshep.xyz/api/health              # {"ok":true,…,"version":"X.Y.Z"}
 curl -s -o /dev/null -w '%{http_code}\n' https://anki.jshep.xyz/api/decks   # 401
+curl -s -o /dev/null -w '%{redirect_url}\n' https://anki.jshep.xyz/api/auth/login   # https://auth.jshep.xyz/application/o/authorize/?…
 curl -sI https://anki.jshep.xyz/ | grep -i -E 'cache-control|content-security-policy'
 docker logs anki-studio --tail 20                      # log JSON, nessun segreto
 ```
 
-Su iPad: apri `https://anki.jshep.xyz` in Safari, inserisci il token, Condividi → Aggiungi
-alla schermata Home. È un'origine nuova rispetto a quella di Tailscale: la PWA va
-reinstallata e il token reinserito (le preferenze stanno nel `localStorage` dell'origine).
+Su iPad: apri `https://anki.jshep.xyz` in Safari: porta da solo su Authentik e, dopo il login,
+torna nell'app. Poi Condividi → Aggiungi alla schermata Home. La PWA installata ha cookie
+separati da Safari, quindi al primo avvio rifà il login (una volta: la sessione dura
+`ANKI_SESSION_DAYS`, 30 giorni). È un'origine nuova rispetto a quella di Tailscale: la PWA di
+prova va reinstallata.
 Se i dati arrivano dal deploy di prova, il collegamento AnkiWeb c'è già
 (`GET /api/sync` → `logged_in: true`); altrimenti fai il login da Impostazioni → AnkiWeb.
 

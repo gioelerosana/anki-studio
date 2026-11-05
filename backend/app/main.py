@@ -15,7 +15,8 @@ from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
 from .logging_setup import register_secret, setup_logging
 from .routers import auth, browse, decks, media, notes, study, sync
-from .security import RateLimiter, require_token, security_headers
+from .oidc import OIDCClient
+from .security import RateLimiter, Signer, require_auth, security_headers, session_key
 from .sync import SyncService, next_auto_delay
 from .web import pwa_app
 
@@ -77,7 +78,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(settings.anki_log_format, settings.anki_log_level)
     register_secret(settings.anki_api_token)
+    register_secret(settings.anki_oidc_client_secret)
     register_secret(settings.ankiweb_password)
+    if settings.anki_dev_login and settings.anki_web_dir is not None:
+        # il login di sviluppo apre la collezione a chiunque: mai insieme alla PWA servita
+        # da qui (l'immagine Docker), cioè mai in un deploy
+        raise RuntimeError("ANKI_DEV_LOGIN non è ammesso con ANKI_WEB_DIR (solo sviluppo)")
+    if not settings.oidc_enabled and not settings.anki_dev_login:
+        log.warning("OIDC non configurato (ANKI_OIDC_*): la PWA non potrà accedere")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -146,6 +154,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.login_limiter = RateLimiter(
         settings.anki_login_max_failures, settings.anki_login_window_s
     )
+    app.state.signer = Signer(session_key(settings))
+    app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
+    if settings.anki_dev_login:
+        log.warning("ANKI_DEV_LOGIN attivo: chiunque raggiunga l'API entra come \"dev\"")
 
     if settings.cors_origins:
         app.add_middleware(
@@ -225,11 +237,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "revision": settings.anki_studio_revision or None,
         }
 
-    protected = [Depends(require_token)]
-    for r in (decks.router, study.router, notes.router, browse.router, sync.router):
+    protected = [Depends(require_auth)]
+    for r in (decks.router, study.router, notes.router, browse.router, sync.router, media.router):
         app.include_router(r, prefix="/api", dependencies=protected)
-    # i media accettano anche il cookie, le sessioni gestiscono da sé l'autenticazione
-    app.include_router(media.router, prefix="/api")
+    # login, callback e logout gestiscono da sé l'accesso
     app.include_router(auth.router, prefix="/api")
     if web is not None:
         # La PWA è il "default" del router, non un Mount su "/": così entra in gioco solo

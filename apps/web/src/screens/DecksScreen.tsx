@@ -6,7 +6,6 @@ import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { QueueCounts } from '../components/QueueCounts';
-import { updateSettings } from '../settings';
 import { primeAudio } from '../study/audio';
 import { useSync } from '../sync/SyncProvider';
 
@@ -40,8 +39,10 @@ export function DecksScreen() {
       setToday(t);
       setError(null);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) updateSettings({ apiToken: '' });
-      else setError(err instanceof Error ? err.message : 'Server non raggiungibile');
+      // 401: ci pensa app/auth.tsx, che rifà il login
+      if (!(err instanceof ApiError && err.status === 401)) {
+        setError(err instanceof Error ? err.message : 'Server non raggiungibile');
+      }
     }
   }, []);
 

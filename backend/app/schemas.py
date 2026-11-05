@@ -244,3 +244,15 @@ class ExtendLimitsIn(BaseModel):
     # carte in più per oggi (anche negative per toglierne)
     new: int = Field(0, ge=-9999, le=9999)
     review: int = Field(0, ge=-9999, le=9999)
+
+
+class AuthUser(BaseModel):
+    """Utente della sessione (GET /api/auth/me)."""
+
+    name: str
+    username: str | None = None
+
+
+class AuthLogout(BaseModel):
+    # end-session di Authentik: la PWA ci naviga per chiudere anche quella sessione
+    logout_url: str | None = None

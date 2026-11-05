@@ -1,9 +1,11 @@
-"""Autenticazione della PWA, limiti ai tentativi e header di sicurezza."""
+"""Sessioni della PWA, limiti ai tentativi e header di sicurezza."""
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import math
 import secrets
@@ -17,7 +19,9 @@ from .config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
-COOKIE_NAME = "anki_media"
+SESSION_COOKIE = "anki_studio_session"
+# stato del login in corso (state, nonce, PKCE): vive pochi minuti, solo su /api/auth
+LOGIN_COOKIE = "anki_studio_login"
 
 
 class RateLimiter:
@@ -77,11 +81,72 @@ def _too_many(retry: int, what: str) -> HTTPException:
     )
 
 
-def media_cookie_value(settings: Settings) -> str:
-    """Il cookie non contiene il token: è un valore derivato che apre solo i media."""
-    return hmac.new(
-        settings.anki_api_token.encode(), b"anki-studio-media-cookie-v1", hashlib.sha256
-    ).hexdigest()
+class Signer:
+    """Cookie firmati (HMAC-SHA256) con scadenza: `base64(json).base64(firma)`.
+
+    Lo scopo entra nella firma, così un cookie del login non vale come sessione.
+    Il contenuto è leggibile da chi ha il cookie: niente segreti dentro, solo chi è
+    l'utente e quando scade.
+    """
+
+    def __init__(self, key: bytes) -> None:
+        self._key = key
+
+    def _mac(self, purpose: str, body: str) -> str:
+        mac = hmac.new(self._key, f"{purpose}.{body}".encode(), hashlib.sha256).digest()
+        return _b64(mac)
+
+    def dumps(self, purpose: str, payload: dict, max_age_s: float) -> str:
+        data = {**payload, "exp": int(time.time() + max_age_s)}
+        body = _b64(json.dumps(data, separators=(",", ":")).encode())
+        return f"{body}.{self._mac(purpose, body)}"
+
+    def loads(self, purpose: str, value: str | None) -> dict | None:
+        if not value or value.count(".") != 1:
+            return None
+        body, mac = value.split(".")
+        if not secrets.compare_digest(mac, self._mac(purpose, body)):
+            return None
+        try:
+            data = json.loads(_unb64(body))
+        except ValueError:
+            return None
+        if not isinstance(data, dict) or not isinstance(data.get("exp"), int):
+            return None
+        return data if data["exp"] > time.time() else None
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def session_key(settings: Settings) -> bytes:
+    """Chiave dei cookie: derivata dal client secret OIDC, così sopravvive ai riavvii
+    (aggiornamenti dell'immagine) senza un altro segreto da gestire. Cambiare il client
+    secret su Authentik chiude tutte le sessioni, che è quello che si vuole."""
+    if settings.anki_oidc_client_secret:
+        return hmac.new(
+            settings.anki_oidc_client_secret.encode(), b"anki-studio-session-v1", hashlib.sha256
+        ).digest()
+    # solo sviluppo (ANKI_DEV_LOGIN): sessioni valide finché gira il processo
+    return secrets.token_bytes(32)
+
+
+def cookie_secure(request: Request) -> bool:
+    # su http://localhost (sviluppo) Safari scarterebbe un cookie Secure;
+    # dietro Traefik lo schema arriva come https grazie a --proxy-headers
+    return not (
+        request.url.scheme == "http" and request.url.hostname in ("localhost", "127.0.0.1")
+    )
+
+
+def read_session(request: Request) -> dict | None:
+    signer: Signer = request.app.state.signer
+    return signer.loads("session", request.cookies.get(SESSION_COOKIE))
 
 
 def _bearer(request: Request) -> str | None:
@@ -91,44 +156,72 @@ def _bearer(request: Request) -> str | None:
     return None
 
 
-def _check(request: Request, ok: bool, presented: bool) -> None:
+def check_blocked(request: Request) -> None:
     limiter: RateLimiter = request.app.state.token_limiter
-    key = client_key(request)
-    # bloccato anche con il token giusto: altrimenti chi indovina se ne accorgerebbe
-    retry = limiter.retry_after(key)
+    # bloccato anche con credenziali giuste: altrimenti chi indovina se ne accorgerebbe
+    retry = limiter.retry_after(client_key(request))
     if retry:
-        raise _too_many(retry, "con un token sbagliato")
-    if not ok:
-        # conta solo i tentativi veri: un <img> senza cookie non sta indovinando niente
-        if presented:
-            limiter.hit(key)
-        log.warning("Token non valido", extra={"client": key, "path": request.url.path})
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Token mancante o non valido",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _too_many(retry, "con credenziali sbagliate")
 
 
-def require_token(request: Request, settings: Settings = Depends(get_settings)) -> None:
-    """Accetta solo `Authorization: Bearer <token>`."""
+def record_auth_failure(request: Request, what: str) -> None:
+    key = client_key(request)
+    request.app.state.token_limiter.hit(key)
+    log.warning("%s non valido", what, extra={"client": key, "path": request.url.path})
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(status.HTTP_401_UNAUTHORIZED, "Accesso richiesto")
+
+
+def _same_origin(request: Request, settings: Settings) -> bool:
+    """Contro il CSRF sulle richieste che modificano dati con il cookie di sessione.
+
+    SameSite=Lax ferma gli altri siti, non gli altri sottodomini di jshep.xyz (stesso
+    "sito"): per quelli serve guardare da dove parte la richiesta. Un browser manda
+    sempre Sec-Fetch-Site (Safari dalla 16.4) o almeno Origin; un client senza nessuno
+    dei due non è un browser, e quindi non può essere usato per un CSRF.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site == "same-origin"
+    origin = request.headers.get("origin")
+    if origin is None:
+        return True
+    expected = settings.public_origin or f"{request.url.scheme}://{request.url.netloc}"
+    return origin == expected
+
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def require_auth(request: Request, settings: Settings = Depends(get_settings)) -> dict:
+    """Sessione OIDC (cookie HttpOnly) o, per script e test, `Authorization: Bearer`.
+
+    Vale anche per i media: <img> e <audio> delle carte mandano il cookie da sé.
+    """
+    check_blocked(request)
     token = _bearer(request)
-    ok = token is not None and secrets.compare_digest(token, settings.anki_api_token)
-    _check(request, ok, presented=token is not None)
-
-
-def require_token_or_media_cookie(
-    request: Request, settings: Settings = Depends(get_settings)
-) -> None:
-    """Per i media: i tag <img>/<audio> delle carte non possono mandare header, quindi
-    va bene anche il cookie impostato da POST /api/auth/session."""
-    token = _bearer(request)
-    cookie = request.cookies.get(COOKIE_NAME)
     if token is not None:
-        ok = secrets.compare_digest(token, settings.anki_api_token)
-    else:
-        ok = cookie is not None and secrets.compare_digest(cookie, media_cookie_value(settings))
-    _check(request, ok, presented=token is not None or cookie is not None)
+        expected = settings.anki_api_token
+        if expected is None:
+            # nessun token da indovinare: è la PWA di prima (in cache) con il token vecchio,
+            # che non deve far bloccare l'IP proprio mentre passa al login con Authentik
+            raise _unauthorized()
+        if not secrets.compare_digest(token, expected):
+            record_auth_failure(request, "Token")
+            raise _unauthorized()
+        return {"sub": "api-token", "name": "Token dell'API"}
+    session = read_session(request)
+    if session is None:
+        raise _unauthorized()
+    if request.method not in _SAFE_METHODS and not _same_origin(request, settings):
+        log.warning(
+            "Richiesta da un'altra origine rifiutata",
+            extra={"client": client_key(request), "path": request.url.path},
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta da un'altra origine")
+    return session
 
 
 def check_login_rate(request: Request) -> None:

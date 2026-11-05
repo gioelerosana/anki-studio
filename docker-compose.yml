@@ -1,7 +1,7 @@
 # Anki Studio in locale o per un deploy di prova: l'immagine unica (PWA + API) costruita
 # dal Dockerfile alla radice, con lo stesso hardening previsto nello stack.
 #
-#   cp .env.example .env   # imposta ANKI_API_TOKEN
+#   cp .env.example .env   # imposta ANKI_PUBLIC_URL e ANKI_OIDC_* (login con Authentik)
 #   docker compose up -d --build
 #
 # La PWA risponde su http://127.0.0.1:8080. In produzione l'immagine viene da GHCR e il

@@ -25,7 +25,7 @@ iPad (PWA) ──HTTPS──▶ Traefik ──▶ anki-studio (un container, un 
 Un'unica immagine, `ghcr.io/gioelerosana/anki-studio`, per `linux/amd64` e `linux/arm64`. Dentro
 c'è un solo processo: uvicorn con **un worker** (la collezione Anki va aperta da un unico
 processo), che serve anche la PWA sulla stessa origine dell'API, così non serve CORS e il
-cookie dei media funziona. Le regole che prima stavano in nginx sono in `backend/app/web.py`:
+cookie di sessione funziona. Le regole che prima stavano in nginx sono in `backend/app/web.py`:
 cache di un anno per `/assets/*`, `no-cache` per `index.html`, `sw.js` e
 `manifest.webmanifest`, fallback SPA, `/api/*` mai in cache e mai sostituito dalla PWA,
 header di sicurezza, limite di 50 MB al body.
@@ -38,7 +38,7 @@ header di sicurezza, limite di 50 MB al body.
 | Filesystem | compatibile con `read_only: true` + tmpfs su `/tmp` |
 | Healthcheck | nell'immagine: `GET /api/health` (200 anche durante una sync) |
 | Spegnimento | `SIGTERM` → ultima sync e chiusura della collezione: concedi **120 s** (`stop_grace_period: 120s`) |
-| Token | `ANKI_API_TOKEN`, oppure `ANKI_API_TOKEN_FILE=/run/secrets/…` (Docker secret) |
+| Accesso | login con Authentik (OIDC): `ANKI_PUBLIC_URL`, `ANKI_OIDC_ISSUER`, `ANKI_OIDC_CLIENT_ID`, `ANKI_OIDC_CLIENT_SECRET_FILE=/run/secrets/…` (Docker secret). Nessun token da inserire nella PWA |
 | Versione | label OCI `org.opencontainers.image.version` e `GET /api/health` → `version`, `revision` |
 
 Le altre variabili sono in [backend/README.md](backend/README.md#configurazione).
@@ -46,9 +46,13 @@ Le altre variabili sono in [backend/README.md](backend/README.md#configurazione)
 ### In locale o per un deploy di prova
 
 ```bash
-cp .env.example .env     # imposta ANKI_API_TOKEN (python -c "import secrets; print(secrets.token_urlsafe(32))")
+cp .env.example .env     # imposta ANKI_PUBLIC_URL e le variabili ANKI_OIDC_*
 docker compose up -d --build
 ```
+
+Il login passa da Authentik anche qui: al provider va aggiunta la redirect URI
+`<ANKI_PUBLIC_URL>/api/auth/callback` dell'origine di prova (per esempio quella `*.ts.net`),
+accanto a quella di produzione. Come configurare il provider: [deploy/stack/README.md](deploy/stack/README.md#2-authentik).
 
 - La PWA risponde su `http://127.0.0.1:8080`. Per provarla su iPad serve HTTPS, per esempio
   `tailscale serve --bg 8080`.
@@ -57,8 +61,8 @@ docker compose up -d --build
   serve un `docker-compose.override.yml` (ignorato da git) con
   `services: {anki-studio: {build: {network: host}}}`, oppure
   `docker build --network host -t anki-studio:local .`.
-- Avvio di prova di un'immagine qualsiasi, con `read_only`, `cap_drop: ALL` e il token come
-  secret, su una rete e un volume usa e getta: `scripts/smoke-test-image.sh anki-studio:local`.
+- Avvio di prova di un'immagine qualsiasi, con `read_only`, `cap_drop: ALL` e i segreti come
+  Docker secret, su una rete e un volume usa e getta: `scripts/smoke-test-image.sh anki-studio:local`.
 
 **Aggiornare il deploy di prova di `/home/ubuntu/anki-studio`** a questa struttura: il
 servizio ora si chiama `anki-studio` (prima `api` + `web`) ma il volume resta
@@ -141,7 +145,8 @@ pnpm install
 cd backend && uv venv && uv pip install -e ".[dev]" && cd ..
 
 # terminale 1: API su :8000 (dati in backend/data)
-ANKI_API_TOKEN=dev-token-almeno-16-caratteri ANKI_DATA_DIR=./data pnpm dev:api
+# ANKI_DEV_LOGIN: niente Authentik in sviluppo, la PWA entra subito come "Sviluppo"
+ANKI_DEV_LOGIN=true ANKI_DATA_DIR=./data pnpm dev:api
 # terminale 2: PWA su :5173, con /api inoltrato a :8000
 pnpm dev
 ```

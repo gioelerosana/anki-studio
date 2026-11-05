@@ -3,7 +3,7 @@
 # Anki Studio: un'unica immagine con la PWA e l'API (FastAPI + motore ufficiale `anki`).
 #
 #   docker build -t anki-studio:local .                     # su myserv: --network host
-#   docker run -p 127.0.0.1:8080:8000 -e ANKI_API_TOKEN=... -v anki-data:/data anki-studio:local
+#   docker run -p 127.0.0.1:8080:8000 --env-file .env -v anki-data:/data anki-studio:local   # .env: ANKI_OIDC_*
 #
 # Un solo processo, uvicorn con un solo worker: la collezione Anki va aperta da un unico
 # processo, e lo stesso processo serve anche i file della PWA (app/web.py), sulla stessa

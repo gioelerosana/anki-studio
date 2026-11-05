@@ -3,7 +3,7 @@
  * Una sola colonna anche su iPad orizzontale: sono poche righe e restano leggibili.
  */
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Unplug } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import {
   Button,
   HeaderBar,
@@ -15,6 +15,7 @@ import {
 } from '@anki-studio/ui-kit';
 import { api } from '../api/client';
 import type { TodayStats } from '../api/types';
+import { useAuth } from '../app/auth';
 import { formatDuration, formatRelative } from '../app/format';
 import { navigate } from '../app/route';
 import { useSettings, type ThemePreference } from '../settings';
@@ -44,17 +45,17 @@ export function SettingsScreen() {
   const { settings, update } = useSettings();
   const { status, openPanel } = useSync();
   const [today, setToday] = useState<TodayStats | null>(null);
-  const [confirmUnlink, setConfirmUnlink] = useState(false);
+  const { user, logout } = useAuth();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     api.todayStats().then(setToday).catch(() => {});
   }, []);
 
-  async function unlink() {
-    // Il cookie dei media va tolto finché il token è ancora valido per la richiesta.
-    await api.deleteSession().catch(() => {});
-    update({ apiToken: '' });
-    navigate({ name: 'decks' }, { replace: true });
+  function signOut() {
+    setLoggingOut(true);
+    void logout();
   }
 
   const last = status?.last_result;
@@ -111,10 +112,10 @@ export function SettingsScreen() {
             </button>
           </Group>
 
-          <Group title="Questo dispositivo">
-            <Row label="Scollega dal server" hint="Il token viene cancellato da questo iPad. La collezione resta sul server.">
-              <Button variant="destructive-outline" icon={<Unplug />} onClick={() => setConfirmUnlink(true)} className="coarse:h-10">
-                Scollega
+          <Group title="Account">
+            <Row label={user?.name || 'Account Authentik'} hint={user?.username ? `Accesso con Authentik come ${user.username}` : 'Accesso con Authentik'}>
+              <Button variant="destructive-outline" icon={<LogOut />} onClick={() => setConfirmLogout(true)} className="coarse:h-10">
+                Esci
               </Button>
             </Row>
           </Group>
@@ -139,18 +140,18 @@ export function SettingsScreen() {
       </main>
 
       <Modal
-        isOpen={confirmUnlink}
-        onClose={() => setConfirmUnlink(false)}
-        title="Scollegare questo dispositivo?"
-        description="Per usare di nuovo Anki Studio qui servirà il token del server."
+        isOpen={confirmLogout}
+        onClose={() => setConfirmLogout(false)}
+        title="Uscire da Anki Studio?"
+        description="Esci anche da Authentik su questo dispositivo. La collezione resta sul server."
         size="sm"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setConfirmUnlink(false)} className="coarse:h-10">
+            <Button variant="secondary" onClick={() => setConfirmLogout(false)} className="coarse:h-10">
               Annulla
             </Button>
-            <Button variant="destructive" onClick={() => void unlink()} className="coarse:h-10">
-              Scollega
+            <Button variant="destructive" loading={loggingOut} onClick={signOut} className="coarse:h-10">
+              Esci
             </Button>
           </>
         }

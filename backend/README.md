@@ -20,9 +20,13 @@ principale. In sviluppo:
 ```bash
 cd backend
 uv venv && uv pip install -e ".[dev]"
-ANKI_API_TOKEN=un-token-lungo-almeno-16 ANKI_DATA_DIR=./data \
+ANKI_DEV_LOGIN=true ANKI_API_TOKEN=un-token-lungo-almeno-16 ANKI_DATA_DIR=./data \
   .venv/bin/uvicorn app.main:create_app --factory --reload --port 8000
 ```
+
+`ANKI_DEV_LOGIN` sostituisce Authentik in sviluppo: la PWA (con `pnpm dev`) entra subito come
+"Sviluppo". Il token serve solo per `curl`. Per provare il login vero in locale, configura le
+variabili `ANKI_OIDC_*` (sotto) con una redirect URI `http://localhost:5173/api/auth/callback`.
 
 > **Sempre un solo worker.** La collezione deve essere aperta da un unico processo.
 
@@ -54,8 +58,15 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 
 | Variabile | Default | |
 |---|---|---|
-| `ANKI_API_TOKEN` | — | Token della PWA (min. 16 caratteri) |
-| `ANKI_API_TOKEN_FILE` | — | In alternativa: file che contiene il token (Docker secret, es. `/run/secrets/anki_api_token`); vince sulla variabile |
+| `ANKI_PUBLIC_URL` | — | URL pubblico dell'app (es. `https://anki.jshep.xyz`): redirect URI `<url>/api/auth/callback` e origine attesa |
+| `ANKI_OIDC_ISSUER` | — | Issuer del provider Authentik, es. `https://auth.jshep.xyz/application/o/anki-studio/` |
+| `ANKI_OIDC_CLIENT_ID` | — | Client ID del provider (client confidenziale) |
+| `ANKI_OIDC_CLIENT_SECRET` / `_FILE` | — | Client secret, o il file che lo contiene (Docker secret); il file vince |
+| `ANKI_OIDC_SCOPES` | `openid profile email` | Scope richiesti |
+| `ANKI_OIDC_ALLOWED_USERS` / `_GROUPS` | vuoti | Seconda barriera dopo le policy di Authentik: `preferred_username`/email o gruppi ammessi (virgole). Vuoti = decide Authentik |
+| `ANKI_SESSION_DAYS` | `30` | Durata della sessione della PWA; scaduta, la PWA rifà il login da sola |
+| `ANKI_DEV_LOGIN` | `false` | Solo sviluppo: login senza Authentik. Rifiutato insieme ad `ANKI_WEB_DIR` |
+| `ANKI_API_TOKEN` / `_FILE` | — | Facoltativo, per script e test: `Authorization: Bearer` (min. 16 caratteri). La PWA non lo usa |
 | `ANKI_WEB_DIR` | vuoto (`/srv/web` nel container) | Build della PWA da servire sulla stessa origine; vuoto = solo API |
 | `ANKI_STUDIO_VERSION` / `_REVISION` | `dev` / vuoto | Versione e commit, li imposta il Dockerfile; li riporta `/api/health` |
 | `ANKI_DATA_DIR` | `./data` (`/data` nel container) | Collezione, media, backup, chiave di sync |
@@ -66,7 +77,7 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | `ANKI_BUSY_TIMEOUT` | `20` | Quanto una richiesta aspetta la collezione occupata prima del 503 |
 | `ANKI_LANG` | `it` | Lingua di Anki per intervalli ("4g") e messaggi |
 | `ANKI_LOG_FORMAT` | `text` (`json` nel container) | Formato dei log |
-| `ANKI_TOKEN_MAX_FAILURES` / `_WINDOW_S` | `20` / `600` | Token sbagliati per IP prima del blocco |
+| `ANKI_TOKEN_MAX_FAILURES` / `_WINDOW_S` | `20` / `600` | Token o login OIDC sbagliati per IP prima del blocco |
 | `ANKI_LOGIN_MAX_FAILURES` / `_WINDOW_S` | `5` / `900` | Login AnkiWeb falliti prima del blocco |
 | `ANKIWEB_USERNAME` / `ANKIWEB_PASSWORD` | — | Login automatico al primo avvio (poi si possono togliere) |
 
@@ -74,7 +85,7 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 
 ### Primo collegamento
 
-Dalla PWA (Impostazioni → AnkiWeb) oppure:
+Dalla PWA (Impostazioni → AnkiWeb) oppure, se hai impostato `ANKI_API_TOKEN`:
 
 ```bash
 TOKEN=...   # quello del .env
@@ -192,21 +203,33 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
 
 ## Sicurezza
 
-- **Token**: tutte le rotte `/api/*` (tranne `/api/health`) richiedono
-  `Authorization: Bearer <ANKI_API_TOKEN>`. Dopo `ANKI_TOKEN_MAX_FAILURES` token sbagliati nella
-  finestra, quell'IP riceve **429** con `Retry-After` per tutte le richieste, anche con il token
-  giusto (altrimenti chi indovina se ne accorgerebbe). Contano solo i tentativi veri: un `<img>`
-  senza cookie non incrementa il contatore.
+- **Accesso con Authentik (OIDC)**: tutte le rotte `/api/*` (tranne `/api/health` e
+  `/api/auth/login|callback|logout`) richiedono la sessione. Il backend è un client OIDC
+  *confidenziale* (Authorization Code + PKCE, `state`, `nonce`): fa lui lo scambio del codice e la
+  PWA non vede mai codici né token, solo il cookie. Dell'ID token controlla `iss`, `aud`, `azp`,
+  `exp`, `iat` e `nonce`; la firma no, perché arriva direttamente dal token endpoint su TLS (OIDC
+  Core §3.1.3.7, punto 6), e per questo l'issuer deve essere `https://`. Chi può entrare lo
+  decidono le policy dell'applicazione su Authentik, più `ANKI_OIDC_ALLOWED_USERS`/`_GROUPS`.
+- **Cookie di sessione** `anki_studio_session`: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`,
+  firmato (HMAC-SHA256, chiave derivata dal client secret: sopravvive ai riavvii, e cambiare il
+  secret su Authentik chiude tutte le sessioni), dura `ANKI_SESSION_DAYS`. Contiene solo `sub`,
+  nome e scadenza. Vale anche per `<img>`/`<audio>` delle carte. Su `http://localhost` non è `Secure`.
+  Il login in corso (`state`, `nonce`, verifier PKCE) sta 10 minuti in `anki_studio_login`
+  (`Path=/api/auth`), usa e getta.
+- **CSRF**: le richieste che modificano dati con il cookie devono arrivare dalla stessa origine
+  (`Sec-Fetch-Site: same-origin`, o `Origin` uguale a `ANKI_PUBLIC_URL`), altrimenti **403**.
+  `SameSite=Lax` da solo non basta: gli altri sottodomini di `jshep.xyz` sono lo stesso "sito".
+- **Token per gli script** (facoltativo): con `ANKI_API_TOKEN` impostato vale anche
+  `Authorization: Bearer <token>`. Dopo `ANKI_TOKEN_MAX_FAILURES` token sbagliati (o login OIDC
+  con `state`/codice non validi) nella finestra, quell'IP riceve **429** con `Retry-After` per
+  tutte le richieste, anche con credenziali giuste (altrimenti chi indovina se ne accorgerebbe).
 - **Login AnkiWeb**: al massimo `ANKI_LOGIN_MAX_FAILURES` falliti nella finestra, per IP e in totale.
-- **Cookie dei media** (`POST /api/auth/session`): `anki_media`, `HttpOnly`, `Secure`,
-  `SameSite=Strict`, `Path=/api/media`. Non contiene il token (è un HMAC derivato) e apre
-  solo `GET /api/media/*`. Su `http://localhost` in sviluppo non è `Secure`.
 - **Header**: su `/api/*` `X-Content-Type-Options`, `Referrer-Policy: no-referrer`,
   `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy`, `Cache-Control: no-store` (i media
   hanno la loro cache), una CSP restrittiva e, sui media, `sandbox`: un `.svg` o `.html` della
   collezione aperto direttamente non esegue script sulla nostra origine. `Strict-Transport-Security`
   se la richiesta arriva in HTTPS.
-- **Log senza segreti**: token, chiave di sync e password usate per il login vengono oscurati
+- **Log senza segreti**: token, client secret OIDC, chiave di sync e password usate per il login vengono oscurati
   (`***`) in ogni messaggio e traceback; il log di accesso registra solo metodo, path, stato e
   durata, mai query string o header.
 - **Dietro proxy**: uvicorn gira con `--proxy-headers` e `FORWARDED_ALLOW_IPS` limitato alle reti
@@ -216,7 +239,7 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
   `trustedIPs` sull'entrypoint), altrimenti un client potrebbe fingersi un altro IP e aggirare il
   rate limit. Nello stack il container non pubblica porte: ci arriva solo Traefik, sulla sua
   rete edge dedicata.
-- **Body**: al massimo 50 MB per richiesta (413 oltre), anche prima del controllo del token
+- **Body**: al massimo 50 MB per richiesta (413 oltre), anche prima del controllo della sessione
   (era `client_max_body_size` di nginx).
 - **PWA**: sui file statici `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
   `Cross-Origin-Resource-Policy` e, su `index.html`, una CSP che ammette solo gli script dell'app
@@ -227,7 +250,7 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
 
 ## Healthcheck e log
 
-`GET /api/health` (senza token) risponde
+`GET /api/health` (senza sessione) risponde
 `{"ok": true, "collection": "open" | "busy", "syncing": …, "version": "26.0.1", "revision": "<commit>"}`:
 verifica che la collezione risponda a una query. Durante una sync lunga vale `busy` ma resta 200,
 perché un riavvio del container a metà sync sarebbe la cosa peggiore. 503 se la collezione è chiusa
@@ -247,14 +270,18 @@ Una PWA installata su iPad richiede HTTPS. In produzione lo fornisce il Traefik 
   `https://<macchina>.<tailnet>.ts.net`
 
 La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file statici
-(`app/web.py`) e `/api`. Così non serve CORS e il cookie per i media funziona senza problemi. Solo se servi la PWA da un'altra origine va aggiunta in
+(`app/web.py`) e `/api`. Così non serve CORS e il cookie di sessione funziona senza problemi. Solo se servi la PWA da un'altra origine va aggiunta in
 `ANKI_CORS_ORIGINS`.
 
 ## API
 
 | Metodo | Rotta | Cosa fa |
 |---|---|---|
-| GET | `/api/health` | Stato della collezione (senza token) |
+| GET | `/api/health` | Stato della collezione (senza sessione) |
+| GET | `/api/auth/login?next=/…` | Navigazione: porta su Authentik e poi torna a `next` (solo percorsi della PWA) |
+| GET | `/api/auth/callback` | Ritorno da Authentik: apre la sessione. Errori → `/?auth_error=denied\|forbidden\|expired\|unreachable\|blocked\|failed\|unconfigured` |
+| GET | `/api/auth/me` | `{name, username}` dell'utente collegato, 401 senza sessione |
+| POST | `/api/auth/logout` | Chiude la sessione → `{logout_url}` (end-session di Authentik) |
 | GET | `/api/decks` | Albero dei mazzi con conteggi nuove/in apprendimento/da ripassare |
 | GET | `/api/stats/today` | Review di oggi, tempo, "Di nuovo" |
 | GET | `/api/stats?deck_id=&days=30` | Carte per stato, review per giorno, ritenzione, previsione a 7 giorni |
@@ -271,14 +298,13 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET/PATCH | `/api/notes/{id}` | Leggi / modifica campi e tag |
 | GET | `/api/search/notes?q=&limit=&offset=` | Ricerca con la sintassi di Anki (400 se non valida) |
 | GET | `/api/tags` | Tutti i tag |
-| GET | `/api/media/{file}` | Immagini e audio delle carte (Bearer o cookie) |
-| POST/DELETE | `/api/auth/session` | Imposta / toglie il cookie per i media |
+| GET | `/api/media/{file}` | Immagini e audio delle carte (con il cookie di sessione) |
 | GET | `/api/sync` | Stato della sync (vedi sopra) |
 | POST | `/api/sync/login` · `/logout` | Collega o scollega AnkiWeb (429 dopo troppi tentativi) |
 | POST | `/api/sync` | Sync normale (409 = serve la sync completa) |
 | POST | `/api/sync/full` | `{direction: "upload" \| "download"}`, solo dopo conferma dell'utente |
 
-Codici comuni: **401** token mancante o sbagliato, **429** troppi tentativi (`Retry-After`),
+Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **403** modifica da un'altra origine, **429** troppi tentativi (`Retry-After`),
 **503** collezione occupata da una sync (`Retry-After`), **502** AnkiWeb non raggiungibile.
 
 ### Note per la PWA
@@ -287,9 +313,10 @@ Codici comuni: **401** token mancante o sbagliato, **429** troppi tentativi (`Re
   `<div class="{card_class}">`, con lo `css` del tipo di nota in uno `<style>` (gli `url()`
   relativi del CSS sono già riscritti in `/api/media/…`). Meglio uno Shadow DOM o un iframe,
   così il CSS della carta non tocca il resto dell'app.
-- **Media**: gli `src` sono già riscritti in `/api/media/...`. I tag `<img>` non
-  possono inviare header, quindi all'avvio la PWA chiama una volta `POST /api/auth/session`
-  e da lì il browser invia il cookie da solo.
+- **Accesso**: all'avvio `GET /api/auth/me`; con 401 la PWA naviga (non `fetch`) su
+  `/api/auth/login?next=<pagina corrente>`. Un 401 più avanti vuol dire sessione scaduta: stesso giro.
+- **Media**: gli `src` sono già riscritti in `/api/media/...`; il browser manda da solo il cookie
+  di sessione anche per `<img>` e `<audio>`.
 - **Audio**: i `[sound:…]` diventano `<button class="anki-play" data-side="q|a" data-index="N">`.
   `question_av[N]` / `answer_av[N]` contengono l'URL del file oppure il testo da leggere con TTS
   (`speechSynthesis`). `autoplay` indica se riprodurli subito.
@@ -319,7 +346,9 @@ uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.1
 ```
 
 `tests/test_web.py` copre il serving della PWA: cache, fallback SPA, confine con `/api`, header,
-limite al body, token da file e versione in `/api/health`.
+limite al body, token da file e versione in `/api/health`. `tests/test_auth.py` copre il login OIDC
+con un provider finto: PKCE, `state`, controlli sull'ID token, utenti e gruppi ammessi, CSRF,
+cookie manomessi, logout, login di sviluppo.
 
 `tests/test_sync_e2e.py` avvia per ogni test un sync server locale (`python -m anki.syncserver`,
 lo stesso protocollo di AnkiWeb) e un secondo client che fa da "Anki desktop": login, primo full
