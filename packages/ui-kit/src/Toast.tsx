@@ -55,15 +55,21 @@ export function Toast({ toast, onDismiss }: ToastProps) {
 export function ToastContainer({
   toasts,
   onDismiss,
+  className,
 }: {
   toasts: ToastMessage[];
   onDismiss: (id: string) => void;
+  /** Posizione alternativa, es. in alto quando in basso ci sono controlli da pollice. */
+  className?: string;
 }) {
   if (toasts.length === 0) return null;
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-[60] flex flex-col items-end gap-2 max-sm:inset-x-3 max-sm:bottom-[calc(4.5rem+env(safe-area-inset-bottom))] max-sm:items-stretch"
+      className={cn(
+        'pointer-events-none fixed bottom-4 right-4 z-[60] flex flex-col items-end gap-2 max-sm:inset-x-3 max-sm:bottom-[calc(4.5rem+env(safe-area-inset-bottom))] max-sm:items-stretch',
+        className,
+      )}
     >
       {toasts.map((toast) => (
         <Toast key={toast.id} toast={toast} onDismiss={onDismiss} />
