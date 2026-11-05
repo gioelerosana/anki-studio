@@ -28,8 +28,17 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
 - `backend` — FastAPI. Contratto API e note per il frontend in [`backend/README.md`](backend/README.md).
   - Un solo processo e un solo worker: la collezione è aperta una volta e protetta da un `RLock`.
   - Le rotte sono `def` (non `async`): girano nel threadpool e passano da `manager.use()`.
-- `docker-compose.yml` — `api` + `web` (nginx serve la PWA e inoltra `/api`, stessa origine).
-  Il reverse proxy HTTPS (Traefik) **non** è in questo repo: vive nello stack principale.
+  - `app/web.py` — serve la build della PWA dallo stesso processo (`ANKI_WEB_DIR`): cache,
+    fallback SPA, header. Sostituisce nginx: `/api/*` non passa mai di qui.
+  - `requirements.lock` — dipendenze con hash per l'immagine e la CI (rigenerale con uv, vedi README).
+- `Dockerfile` — **un'unica immagine** (PWA + API, un processo, utente 1000:1000, compatibile con
+  `read_only`, healthcheck). Pubblicata su `ghcr.io/<owner>/anki-studio` da
+  `.github/workflows/ci.yml` ai tag `vX.Y.Z`, per amd64 e arm64.
+- `docker-compose.yml` — l'immagine unica in locale / deploy di prova. Il reverse proxy HTTPS
+  (Traefik) **non** è in questo repo: vive nello stack principale.
+- `deploy/stack/` — proposta di integrazione nello stack di myserv (compose, router Traefik,
+  script di auto-update): la applica l'utente, mai un agente.
+- `scripts/smoke-test-image.sh` — avvio di prova di un'immagine con l'hardening di produzione.
 
 ## Regole non negoziabili
 
@@ -47,7 +56,13 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
 ```bash
 pnpm typecheck && pnpm build      # frontend
 pnpm test:api                     # backend (pytest)
+# se tocchi Dockerfile, app/web.py, dipendenze o deploy (su myserv la build vuole --network host):
+docker build --network host -t anki-studio:local . && scripts/smoke-test-image.sh anki-studio:local
 ```
+
+Su myserv gira anche un deploy di prova (progetto compose `anki-studio`, volume
+`anki-studio_anki-data`, con dati veri): per le prove usa sempre un progetto compose, un
+volume e una porta diversi (lo script di smoke test lo fa da sé).
 
 Commit piccoli in stile Conventional Commits, in italiano, con lo scope dell'area:
 `feat(web): …`, `fix(api): …`, `docs: …`. Fai `git add` **solo dei file della tua area**:
@@ -79,3 +94,10 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
 - [ ] Modifica delle opzioni del mazzo dalla PWA (oggi sola lettura)
+
+**Immagine e deploy**
+- [x] Immagine Docker unica (PWA servita da FastAPI), multi-arch, hardening, versione in `/api/health`
+- [x] CI su GitHub Actions e pubblicazione su GHCR ai tag `vX.Y.Z`
+- [x] Proposta per lo stack (`deploy/stack/`) con script di auto-update controllato
+- [ ] Repository GitHub, primo tag e package GHCR (pubblico o pull privato) — passi nel README, "Pubblicazione"
+- [ ] Integrazione nello stack e migrazione dei dati dal deploy di prova (`deploy/stack/README.md`)

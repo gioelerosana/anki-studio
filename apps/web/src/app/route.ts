@@ -4,7 +4,7 @@
  * Perché l'hash e non la History API: la PWA installata su iPad non ha barra
  * degli indirizzi né tasto indietro, ma un ricaricamento (o iPadOS che
  * riapre l'app dopo averla sospesa) deve riportare sulla stessa schermata.
- * L'hash non arriva mai al server, quindi nginx e il service worker servono
+ * L'hash non arriva mai al server, quindi il backend e il service worker servono
  * sempre la stessa shell.
  */
 import { useSyncExternalStore } from 'react';

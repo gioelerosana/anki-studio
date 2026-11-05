@@ -1,6 +1,7 @@
 /*
  * Client dell'API. Stessa origine della PWA (/api): in sviluppo ci pensa il
- * proxy di Vite, in produzione nginx (apps/web/nginx.conf).
+ * proxy di Vite, in produzione lo stesso processo dell'API serve anche la PWA
+ * (backend/app/web.py).
  */
 import { getSettings } from '../settings';
 import type {

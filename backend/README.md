@@ -8,13 +8,14 @@ Usa il pacchetto Python ufficiale `anki` (lo stesso motore di Anki desktop),
 quindi scheduler (FSRS/SM-2), rendering dei template e sync sono quelli veri.
 
 ```
-iPad (PWA) ──HTTPS──▶ Traefik ──▶ nginx (web) ──/api──▶ FastAPI ──▶ collection.anki2 ◀──sync──▶ AnkiWeb ◀──▶ Anki desktop / AnkiMobile
+iPad (PWA) ──HTTPS──▶ Traefik ──▶ anki-studio: FastAPI (/api + file della PWA) ──▶ collection.anki2 ◀──sync──▶ AnkiWeb ◀──▶ Anki desktop / AnkiMobile
 ```
 
 ## Avvio
 
-In produzione gira dentro lo stack Docker alla radice del repo (`docker compose up -d --build`,
-vedi il README principale). In sviluppo:
+In produzione gira nell'immagine Docker unica (`Dockerfile` alla radice), che serve anche la PWA
+dallo stesso processo (`app/web.py`, attivo quando `ANKI_WEB_DIR` è impostata): vedi il README
+principale. In sviluppo:
 
 ```bash
 cd backend
@@ -25,8 +26,9 @@ ANKI_API_TOKEN=un-token-lungo-almeno-16 ANKI_DATA_DIR=./data \
 
 > **Sempre un solo worker.** La collezione deve essere aperta da un unico processo.
 
-Documentazione interattiva: `http://localhost:8000/docs` (solo accedendo direttamente
-all'API: nginx inoltra soltanto `/api`).
+Documentazione interattiva: `http://localhost:8000/docs`, solo in sviluppo. Quando il processo
+serve anche la PWA (`ANKI_WEB_DIR`, cioè nell'immagine) `/docs` e `/openapi.json` sono spenti:
+sarebbero pubblici sulla stessa origine dell'app.
 
 ### Collezione di prova
 
@@ -53,6 +55,9 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | Variabile | Default | |
 |---|---|---|
 | `ANKI_API_TOKEN` | — | Token della PWA (min. 16 caratteri) |
+| `ANKI_API_TOKEN_FILE` | — | In alternativa: file che contiene il token (Docker secret, es. `/run/secrets/anki_api_token`); vince sulla variabile |
+| `ANKI_WEB_DIR` | vuoto (`/srv/web` nel container) | Build della PWA da servire sulla stessa origine; vuoto = solo API |
+| `ANKI_STUDIO_VERSION` / `_REVISION` | `dev` / vuoto | Versione e commit, li imposta il Dockerfile; li riporta `/api/health` |
 | `ANKI_DATA_DIR` | `./data` (`/data` nel container) | Collezione, media, backup, chiave di sync |
 | `ANKI_SYNC_ENDPOINT` | vuoto = AnkiWeb | URL di un sync server self-hosted |
 | `ANKI_AUTO_SYNC_MINUTES` | `10` | Sync automatica (0 = solo manuale) |
@@ -102,7 +107,8 @@ curl -X POST localhost:8000/api/sync -H "Authorization: Bearer $TOKEN"
   completa anche per minuti. Le rotte che non la ottengono entro `ANKI_BUSY_TIMEOUT` rispondono
   **503** `"Sync in corso: riprova tra poco"` con `Retry-After`, invece di restare appese.
 - Allo spegnimento: si aspetta la sync in corso (fino a 30 s), poi un'ultima sync con timeout
-  breve, poi la collezione viene chiusa. `stop_grace_period: 120s` nello stack copre tutto.
+  breve, poi la collezione viene chiusa. Il container deve avere almeno 120 s prima del SIGKILL
+  (`stop_grace_period: 120s` nei file compose, `docker stop -t 120`): il default di Docker è 10 s.
 
 ### Stato (`GET /api/sync`)
 
@@ -137,7 +143,9 @@ com'è e dopo un nuovo login si sincronizza normalmente.
 
 ## Backup e ripristino
 
-Tutto lo stato vive nel volume `anki-data` (`/data` nel container):
+Tutto lo stato vive in `/data` nel container: il volume `anki-studio_anki-data` con il
+`docker-compose.yml` del repo, `./anki-studio/data` nello stack (sotto Backrest, vedi
+[`deploy/stack/README.md`](../deploy/stack/README.md)):
 
 ```
 /data/collection.anki2        la collezione (SQLite in modalità WAL)
@@ -155,19 +163,19 @@ AnkiWeb.
 **Backup del volume** (a container fermo, così SQLite è coerente):
 
 ```bash
-docker compose stop api
+docker compose stop anki-studio
 docker run --rm -v anki-studio_anki-data:/data -v "$PWD":/backup alpine \
   tar czf /backup/anki-data-$(date +%F).tgz -C /data .
-docker compose start api
+docker compose start anki-studio
 ```
 
 **Ripristino del volume:**
 
 ```bash
-docker compose stop api
+docker compose stop anki-studio
 docker run --rm -v anki-studio_anki-data:/data -v "$PWD":/backup alpine \
-  sh -c 'rm -rf /data/* && tar xzf /backup/anki-data-AAAA-MM-GG.tgz -C /data && chown -R 1000 /data'
-docker compose start api
+  sh -c 'rm -rf /data/* && tar xzf /backup/anki-data-AAAA-MM-GG.tgz -C /data && chown -R 1000:1000 /data'
+docker compose start anki-studio
 ```
 
 Ripristina sempre **insieme** `collection.media/` e `collection.media.db2`: se l'indice dice che
@@ -175,7 +183,7 @@ un file c'era e la cartella non ce l'ha, la sync dei media lo considera cancella
 anche da AnkiWeb (è il comportamento di Anki).
 
 **Ripristino di un solo `.colpkg`** (es. dopo un download completo sbagliato): copialo fuori
-(`docker compose cp api:/data/backups/backup-….colpkg .`) e importalo in Anki desktop
+(`docker compose cp anki-studio:/data/backups/backup-….colpkg .`) e importalo in Anki desktop
 (File → Importa, sostituisce la collezione), poi sincronizza da desktop scegliendo "Carica su
 AnkiWeb"; infine sul server `POST /api/sync/full {"direction":"download"}`.
 
@@ -202,18 +210,30 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
   (`***`) in ogni messaggio e traceback; il log di accesso registra solo metodo, path, stato e
   durata, mai query string o header.
 - **Dietro proxy**: uvicorn gira con `--proxy-headers` e `FORWARDED_ALLOW_IPS` limitato alle reti
-  private (vedi `Dockerfile`), quindi `X-Forwarded-For`/`-Proto` contano solo se arrivano da nginx
-  o Traefik. Il proxy pubblico (Traefik) deve **sovrascrivere** l'`X-Forwarded-For` dei client
+  private (vedi `Dockerfile`), quindi `X-Forwarded-For`/`-Proto` contano solo se arrivano da
+  Traefik (o da un altro proxy sulla rete privata). Il proxy pubblico (Traefik) deve **sovrascrivere** l'`X-Forwarded-For` dei client
   (è il default di Traefik: non attivare `forwardedHeaders.insecure` né mettere IP pubblici in
   `trustedIPs` sull'entrypoint), altrimenti un client potrebbe fingersi un altro IP e aggirare il
-  rate limit. L'API non è mai pubblicata direttamente: solo il servizio `web`.
+  rate limit. Nello stack il container non pubblica porte: ci arriva solo Traefik, sulla sua
+  rete edge dedicata.
+- **Body**: al massimo 50 MB per richiesta (413 oltre), anche prima del controllo del token
+  (era `client_max_body_size` di nginx).
+- **PWA**: sui file statici `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  `Cross-Origin-Resource-Policy` e, su `index.html`, una CSP che ammette solo gli script dell'app
+  (`script-src 'self'` più l'hash dello script inline di `index.html`, calcolato all'avvio).
+  Immagini, font e stili restano liberi: le carte della collezione possono usarli.
+- **Configurazione**: un errore di validazione delle variabili non stampa mai i valori
+  (token e password AnkiWeb non finiscono nei log del container).
 
 ## Healthcheck e log
 
-`GET /api/health` (senza token) risponde `{"ok": true, "collection": "open" | "busy", "syncing": …}`:
+`GET /api/health` (senza token) risponde
+`{"ok": true, "collection": "open" | "busy", "syncing": …, "version": "0.1.0", "revision": "<commit>"}`:
 verifica che la collezione risponda a una query. Durante una sync lunga vale `busy` ma resta 200,
 perché un riavvio del container a metà sync sarebbe la cosa peggiore. 503 se la collezione è chiusa
 o illeggibile.
+
+L'immagine ha lo stesso controllo come `HEALTHCHECK`.
 
 Con `ANKI_LOG_FORMAT=json` ogni evento è una riga JSON (`ts`, `level`, `logger`, `msg` e campi
 come `method`, `path`, `status`, `ms`, `client`, `outcome`, `error_kind`).
@@ -223,11 +243,11 @@ come `method`, `path`, `status`, `ms`, `client`, `outcome`, `error_kind`).
 Una PWA installata su iPad richiede HTTPS. In produzione lo fornisce il Traefik dello stack; per i test:
 
 - **Tailscale** (consigliato, nessuna porta aperta su internet):
-  `tailscale serve --bg 8080` (porta di `web` nello stack) → `https://<macchina>.<tailnet>.ts.net`
+  `tailscale serve --bg 8080` (porta pubblicata dal `docker-compose.yml` del repo) →
+  `https://<macchina>.<tailnet>.ts.net`
 
-Nello stack la PWA e l'API stanno **sulla stessa origine**: nginx (`apps/web/nginx.conf`)
-serve i file statici e inoltra `/api` a questo servizio. Così non serve CORS e il cookie
-per i media funziona senza problemi. Solo se servi la PWA da un'altra origine va aggiunta in
+La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file statici
+(`app/web.py`) e `/api`. Così non serve CORS e il cookie per i media funziona senza problemi. Solo se servi la PWA da un'altra origine va aggiunta in
 `ANKI_CORS_ORIGINS`.
 
 ## API
@@ -283,11 +303,23 @@ Codici comuni: **401** token mancante o sbagliato, **429** troppi tentativi (`Re
   Il server lo limita al massimo impostato nel preset del mazzo, come fa Anki desktop.
 - Un **409** su `answer` significa che la coda è cambiata, per esempio dopo una sync: basta ricaricare `GET /study`.
 
+## Dipendenze
+
+`requirements.lock` fissa versioni e hash di tutte le dipendenze per l'immagine (e per la CI).
+Dopo un cambio in `pyproject.toml`:
+
+```bash
+uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.13 -o requirements.lock
+```
+
 ## Test
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
+
+`tests/test_web.py` copre il serving della PWA: cache, fallback SPA, confine con `/api`, header,
+limite al body, token da file e versione in `/api/health`.
 
 `tests/test_sync_e2e.py` avvia per ogni test un sync server locale (`python -m anki.syncserver`,
 lo stesso protocollo di AnkiWeb) e un secondo client che fa da "Anki desktop": login, primo full

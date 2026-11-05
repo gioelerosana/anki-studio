@@ -64,7 +64,7 @@ class RateLimiter:
 
 
 def client_key(request: Request) -> str:
-    # dietro nginx/Traefik l'IP vero arriva da X-Forwarded-For, che uvicorn
+    # dietro Traefik l'IP vero arriva da X-Forwarded-For, che uvicorn
     # applica solo se il proxy è fidato (FORWARDED_ALLOW_IPS, vedi Dockerfile)
     return request.client.host if request.client else "unknown"
 

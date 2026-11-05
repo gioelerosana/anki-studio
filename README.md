@@ -5,9 +5,9 @@ sincronizzata con **AnkiWeb**. È sorella di [XMap Studio](https://github.com/gi
 stesso design system e stesso stack frontend.
 
 ```
-iPad (PWA) ──HTTPS──▶ Traefik ──▶ web (nginx: PWA + /api proxy) ──▶ api (FastAPI + motore Anki)
-                                                                      │
-                                                     collection.anki2 ◀──sync──▶ AnkiWeb
+iPad (PWA) ──HTTPS──▶ Traefik ──▶ anki-studio (un container, un processo)
+                                   ├─ /        PWA (file statici)
+                                   └─ /api/*   FastAPI + motore Anki ──▶ collection.anki2 ◀──sync──▶ AnkiWeb
 ```
 
 | Cartella | Cosa c'è |
@@ -15,17 +15,129 @@ iPad (PWA) ──HTTPS──▶ Traefik ──▶ web (nginx: PWA + /api proxy) 
 | `apps/web` | PWA React 19 + Vite + Tailwind 3 |
 | `packages/ui-kit` | Design system condiviso con XMap Studio ([docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md)) |
 | `backend` | API FastAPI sul pacchetto Python ufficiale `anki` ([backend/README.md](backend/README.md)) |
+| `Dockerfile` | L'immagine unica: build della PWA + runtime Python che serve PWA e API |
+| `.github/workflows/ci.yml` | CI su PR e push, pubblicazione su GHCR ai tag `vX.Y.Z` |
+| `deploy/stack` | Proposta di integrazione nello stack di myserv ([deploy/stack/README.md](deploy/stack/README.md)) |
+| `scripts/smoke-test-image.sh` | Avvio di prova di un'immagine con l'hardening di produzione |
 
-## Avvio con Docker (produzione)
+## L'immagine Docker
+
+Un'unica immagine, `ghcr.io/<owner>/anki-studio`, per `linux/amd64` e `linux/arm64`. Dentro
+c'è un solo processo: uvicorn con **un worker** (la collezione Anki va aperta da un unico
+processo), che serve anche la PWA sulla stessa origine dell'API, così non serve CORS e il
+cookie dei media funziona. Le regole che prima stavano in nginx sono in `backend/app/web.py`:
+cache di un anno per `/assets/*`, `no-cache` per `index.html`, `sw.js` e
+`manifest.webmanifest`, fallback SPA, `/api/*` mai in cache e mai sostituito dalla PWA,
+header di sicurezza, limite di 50 MB al body.
+
+| | |
+|---|---|
+| Porta | `8000` |
+| Dati | `/data` (collezione, media, backup `.colpkg`, chiave di sync AnkiWeb) |
+| Utente | `1000:1000`, mai root; la cartella dati va data a questo UID |
+| Filesystem | compatibile con `read_only: true` + tmpfs su `/tmp` |
+| Healthcheck | nell'immagine: `GET /api/health` (200 anche durante una sync) |
+| Spegnimento | `SIGTERM` → ultima sync e chiusura della collezione: concedi **120 s** (`stop_grace_period: 120s`) |
+| Token | `ANKI_API_TOKEN`, oppure `ANKI_API_TOKEN_FILE=/run/secrets/…` (Docker secret) |
+| Versione | label OCI `org.opencontainers.image.version` e `GET /api/health` → `version`, `revision` |
+
+Le altre variabili sono in [backend/README.md](backend/README.md#configurazione).
+
+### In locale o per un deploy di prova
 
 ```bash
 cp .env.example .env     # imposta ANKI_API_TOKEN (python -c "import secrets; print(secrets.token_urlsafe(32))")
 docker compose up -d --build
 ```
 
-- La PWA risponde su `http://127.0.0.1:8080`. L'esposizione su internet in HTTPS passa dal Traefik dello stack principale, collegato al servizio `web` sulla porta 80.
-- I dati (collezione, media, chiave AnkiWeb) stanno nel volume `anki-studio_anki-data`. Per fare un backup: `docker run --rm -v anki-studio_anki-data:/d -v $PWD:/b alpine tar czf /b/anki-data.tgz -C /d .`
-- Collegamento ad AnkiWeb, la prima volta: `POST /api/sync/login`, poi `POST /api/sync` (vedi [backend/README.md](backend/README.md)).
+- La PWA risponde su `http://127.0.0.1:8080`. Per provarla su iPad serve HTTPS, per esempio
+  `tailscale serve --bg 8080`.
+- I dati stanno nel volume `anki-studio_anki-data`. Backup e ripristino: [backend/README.md](backend/README.md#backup-e-ripristino).
+- Su myserv il daemon ha `"bridge": "none"`: la build ha rete solo con `--network host`, quindi
+  serve un `docker-compose.override.yml` (ignorato da git) con
+  `services: {anki-studio: {build: {network: host}}}`, oppure
+  `docker build --network host -t anki-studio:local .`.
+- Avvio di prova di un'immagine qualsiasi, con `read_only`, `cap_drop: ALL` e il token come
+  secret, su una rete e un volume usa e getta: `scripts/smoke-test-image.sh anki-studio:local`.
+
+**Aggiornare il deploy di prova di `/home/ubuntu/anki-studio`** a questa struttura: il
+servizio ora si chiama `anki-studio` (prima `api` + `web`) ma il volume resta
+`anki-studio_anki-data`, quindi i dati restano. Aggiorna anche l'override locale, poi
+`docker compose up -d --build --remove-orphans` (lo stop del vecchio `api` fa l'ultima sync).
+
+### In produzione
+
+Nello stack principale con l'immagine pubblicata e pinnata per digest: vedi
+[deploy/stack/README.md](deploy/stack/README.md), che spiega anche come spostare lì i dati
+del deploy di prova.
+
+## Pubblicazione
+
+La CI (`.github/workflows/ci.yml`) gira su ogni PR e push: typecheck e build della PWA, pytest,
+build dell'immagine per amd64 e arm64 e avvio di prova. Quando arriva un tag `vX.Y.Z` pubblica
+anche l'immagine su GHCR con i tag `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>` (le pre-release
+`vX.Y.Z-rc.N` hanno solo `X.Y.Z-rc.N` e `sha-…`: niente `latest`), con provenance e SBOM.
+Usa solo il `GITHUB_TOKEN` del workflow: nessun segreto da configurare.
+
+La versione viene dal tag: PWA (Impostazioni), `/api/health` e label dell'immagine la
+prendono da lì, non serve cambiarla nei `package.json`.
+
+### La prima volta
+
+1. **Crea il repository** su GitHub (il nome del repo diventa il nome dell'immagine,
+   `ghcr.io/<owner>/<repo>`). Con la CLI, dalla radice di questo checkout:
+   ```bash
+   gh repo create <owner>/anki-studio --private --source . --remote origin
+   ```
+   oppure crealo vuoto dal sito e `git remote add origin git@github.com:<owner>/anki-studio.git`.
+2. **Porta il lavoro su `main` e fai push**:
+   ```bash
+   git switch main && git merge --ff-only feat/immagine-docker
+   git push -u origin main
+   ```
+   Su GitHub → Actions controlla che il workflow **CI** sia verde (il primo giro dura di più:
+   la cache è vuota e arm64 gira sotto QEMU).
+3. **Primo tag**:
+   ```bash
+   git tag -a v0.1.0 -m "Anki Studio 0.1.0"
+   git push origin v0.1.0
+   ```
+   Il job **Pubblica su GHCR** scrive nel riepilogo il riferimento da pinnare,
+   `ghcr.io/<owner>/anki-studio:0.1.0@sha256:…`.
+4. **Visibilità del package**. Un package nuovo su GHCR nasce privato.
+   - *Pubblico* (più semplice, il codice non contiene segreti): GitHub → il tuo profilo →
+     Packages → `anki-studio` → Package settings → Change visibility → Public.
+   - *Privato*: sul server serve un login a GHCR con un personal access token (classic) con il
+     solo scope `read:packages`:
+     ```bash
+     docker login ghcr.io -u <utente-github>    # incolla il token come password
+     ```
+     Docker salva la credenziale in `~/.docker/config.json`: tienila con permessi 600.
+   In entrambi i casi, nelle Package settings collega il package al repository
+   (di solito lo fa da sé grazie alla label `org.opencontainers.image.source`).
+5. **Digest e pin nello stack**. Il riferimento completo è nel riepilogo del workflow; in
+   alternativa, dal server:
+   ```bash
+   docker buildx imagetools inspect ghcr.io/<owner>/anki-studio:0.1.0 | sed -n 3p   # Digest: sha256:…
+   ```
+   È il digest dell'indice multi-arch (vale per arm64 e amd64). Va scritto come
+   `ghcr.io/<owner>/anki-studio:0.1.0@sha256:…` in `COMPOSE/compose.anki-studio.yml` dello stack,
+   poi `task validate`: il resto è in [deploy/stack/README.md](deploy/stack/README.md).
+
+### Le release successive
+
+```bash
+git tag -a v0.2.0 -m "Anki Studio 0.2.0" && git push origin v0.2.0
+```
+
+Poi aggiorna il pin nello stack a mano, oppure lascia fare a `scripts/update-anki-studio.sh`
+se hai attivato l'auto-update controllato. Per verificare cosa è stato pubblicato:
+`docker buildx imagetools inspect ghcr.io/<owner>/anki-studio:0.2.0 --format '{{json .Provenance}}'`.
+
+Dependabot (`.github/dependabot.yml`) propone come PR gli aggiornamenti delle action e delle
+immagini base, entrambe pinnate per digest. Le dipendenze Python sono fissate con gli hash in
+`backend/requirements.lock`: dopo un cambio in `backend/pyproject.toml` rigeneralo con il
+comando scritto in cima al file.
 
 ## Sviluppo
 
@@ -39,4 +151,8 @@ ANKI_API_TOKEN=dev-token-almeno-16-caratteri ANKI_DATA_DIR=./data pnpm dev:api
 pnpm dev
 ```
 
-Controlli: `pnpm typecheck`, `pnpm build`, `pnpm test:api`.
+Controlli: `pnpm typecheck`, `pnpm build`, `pnpm test:api`. Per l'immagine:
+`docker build --network host -t anki-studio:local . && scripts/smoke-test-image.sh anki-studio:local`.
+
+In sviluppo l'API gira senza `ANKI_WEB_DIR`, quindi serve solo `/api` (e la documentazione
+interattiva su `http://localhost:8000/docs`); la PWA la serve Vite con il proxy verso `/api`.
