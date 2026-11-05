@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     anki_login_max_failures: int = 5
     anki_login_window_s: float = 900
 
+    # lingua di Anki per intervalli dei pulsanti ("4g"), riepiloghi e messaggi di sync
+    anki_lang: str = "it"
+
     anki_log_format: Literal["text", "json"] = "text"
     anki_log_level: str = "INFO"
 

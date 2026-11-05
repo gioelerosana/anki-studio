@@ -4,6 +4,7 @@ import random
 import time
 from contextlib import asynccontextmanager, suppress
 
+import anki.lang
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -72,6 +73,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # va impostata prima di aprire la collezione: il backend Rust la legge allora
+        anki.lang.set_lang(settings.anki_lang)
         manager = CollectionManager(
             settings.collection_path, busy_timeout=settings.anki_busy_timeout
         )

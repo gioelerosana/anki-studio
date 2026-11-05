@@ -49,6 +49,18 @@ class StudyState(BaseModel):
     done: bool
     counts: Counts
     card: StudyCard | None = None
+    # nome completo del mazzo che si sta studiando, es. "Lingue::Spagnolo::Verbi"
+    deck_name: str | None = None
+    # cosa annullerebbe «Annulla» (già tradotto, es. "Rispondi alla carta"); null = niente
+    undo_label: str | None = None
+
+
+class TypedAnswerIn(BaseModel):
+    typed: str = Field(max_length=10_000)
+
+
+class TypedAnswerOut(BaseModel):
+    answer_html: str
 
 
 class AnswerIn(BaseModel):

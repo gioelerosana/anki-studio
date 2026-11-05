@@ -1,3 +1,4 @@
+import anki.lang
 import pytest
 from anki.collection import Collection
 from fastapi.testclient import TestClient
@@ -6,6 +7,16 @@ from app.config import Settings
 from app.main import create_app
 
 TOKEN = "test-token-abcdefghijklmnop"
+
+
+@pytest.fixture(autouse=True)
+def _english_stock_notetypes():
+    """L'app imposta la lingua di Anki (ANKI_LANG=it) per tutto il processo: le
+    collezioni create dopo avrebbero "Base" al posto di "Basic". I test (e lo
+    script di seed) creano le collezioni in inglese, come una collezione vera."""
+    anki.lang.set_lang("en")
+    yield
+    anki.lang.set_lang("en")
 
 
 @pytest.fixture

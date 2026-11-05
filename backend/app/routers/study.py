@@ -7,7 +7,7 @@ hai studiato da un altro dispositivo e sincronizzato, ricevi 409 e la PWA
 ricarica la carta successiva).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from anki.cards import Card
 from anki.collection import Collection
@@ -17,8 +17,16 @@ from anki.utils import int_time
 
 from ..collection import CollectionManager
 from ..deps import get_manager
-from ..rendering import render_card
-from ..schemas import AnswerIn, Counts, FlagIn, StudyCard, StudyState
+from ..rendering import render_card, render_typed_answer, strip_bidi
+from ..schemas import (
+    AnswerIn,
+    Counts,
+    FlagIn,
+    StudyCard,
+    StudyState,
+    TypedAnswerIn,
+    TypedAnswerOut,
+)
 
 router = APIRouter(tags=["study"])
 
@@ -35,11 +43,26 @@ _RATING = {
 }
 
 
+# `decks.select()` è un'operazione annullabile ("Seleziona mazzo"): ci segniamo il suo
+# nome (tradotto) per non proporla mai come cosa da annullare
+_select_labels: set[str] = set()
+
+
 def _select_deck(col: Collection, deck_id: int) -> None:
     if col.decks.get(deck_id, default=False) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mazzo non trovato")
     if col.decks.get_current_id() != deck_id:
         col.decks.select(deck_id)
+        label = col.undo_status().undo
+        if label:
+            _select_labels.add(label)
+
+
+def _undo_label(col: Collection) -> str | None:
+    """Cosa annullerebbe «Annulla», o None. Dopo un cambio di mazzo non si annulla
+    niente: l'ultima risposta era in un altro mazzo e tornarci a sorpresa confonde."""
+    label = col.undo_status().undo
+    return label if label and label not in _select_labels else None
 
 
 def _state(col: Collection) -> StudyState:
@@ -49,8 +72,11 @@ def _state(col: Collection) -> StudyState:
         learning=queued.learning_count,
         review=queued.review_count,
     )
+    deck_name = col.decks.name(col.decks.get_current_id())
     if not queued.cards:
-        return StudyState(done=True, counts=counts)
+        return StudyState(
+            done=True, counts=counts, deck_name=deck_name, undo_label=_undo_label(col)
+        )
 
     qc = queued.cards[0]
     card = Card(col)
@@ -59,12 +85,14 @@ def _state(col: Collection) -> StudyState:
     return StudyState(
         done=False,
         counts=counts,
+        deck_name=deck_name,
+        undo_label=_undo_label(col),
         card=StudyCard(
             card_id=card.id,
             note_id=card.nid,
             deck_id=card.did,
             queue=_QUEUE[qc.queue],
-            button_labels=list(col.sched.describe_next_states(qc.states)),
+            button_labels=[strip_bidi(x) for x in col.sched.describe_next_states(qc.states)],
             flag=card.user_flag(),
             tags=list(note.tags),
             **render_card(card),
@@ -122,6 +150,8 @@ def answer(
 @router.post("/decks/{deck_id}/study/undo", response_model=StudyState)
 def undo(deck_id: int, manager: CollectionManager = Depends(get_manager)):
     with manager.use() as col:
+        if _undo_label(col) is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Niente da annullare")
         try:
             col.undo()
         except UndoEmpty:
@@ -137,18 +167,59 @@ def _card_or_404(col: Collection, card_id: int) -> Card:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Carta non trovata")
 
 
-@router.post("/cards/{card_id}/bury", status_code=204)
-def bury(card_id: int, manager: CollectionManager = Depends(get_manager)):
+_DECK_QUERY = Query(
+    None, description="Se presente, risponde con lo StudyState di questo mazzo (200) invece di 204"
+)
+
+
+def _after_action(col: Collection, deck_id: int | None):
+    if deck_id is None:
+        return Response(status_code=204)
+    _select_deck(col, deck_id)
+    return _state(col)
+
+
+@router.post(
+    "/cards/{card_id}/bury",
+    response_model=StudyState,
+    responses={204: {"description": "Senza deck_id: nessun contenuto"}},
+)
+def bury(
+    card_id: int,
+    deck_id: int | None = _DECK_QUERY,
+    manager: CollectionManager = Depends(get_manager),
+):
     with manager.use() as col:
         _card_or_404(col, card_id)
         col.sched.bury_cards([card_id])
+        return _after_action(col, deck_id)
 
 
-@router.post("/cards/{card_id}/suspend", status_code=204)
-def suspend(card_id: int, manager: CollectionManager = Depends(get_manager)):
+@router.post(
+    "/cards/{card_id}/suspend",
+    response_model=StudyState,
+    responses={204: {"description": "Senza deck_id: nessun contenuto"}},
+)
+def suspend(
+    card_id: int,
+    deck_id: int | None = _DECK_QUERY,
+    manager: CollectionManager = Depends(get_manager),
+):
     with manager.use() as col:
         _card_or_404(col, card_id)
         col.sched.suspend_cards([card_id])
+        return _after_action(col, deck_id)
+
+
+@router.post("/cards/{card_id}/type-answer", response_model=TypedAnswerOut)
+def type_answer(
+    card_id: int, body: TypedAnswerIn, manager: CollectionManager = Depends(get_manager)
+):
+    """Retro della carta con la risposta digitata confrontata come in Anki
+    (`<code id=typeans>` con le classi typeGood/typeBad/typeMissed)."""
+    with manager.use() as col:
+        card = _card_or_404(col, card_id)
+        return TypedAnswerOut(answer_html=render_typed_answer(card, body.typed))
 
 
 @router.post("/cards/{card_id}/flag", status_code=204)

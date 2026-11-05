@@ -49,6 +49,15 @@ export interface StudyState {
   done: boolean;
   counts: Counts;
   card: StudyCard | null;
+  /** Nome completo del mazzo, es. "Lingue::Spagnolo::Verbi". */
+  deck_name?: string | null;
+  /** Cosa annullerebbe «Annulla», già tradotto (es. "Rispondi alla carta"); null = niente da annullare. */
+  undo_label?: string | null;
+}
+
+export interface TypedAnswer {
+  /** Retro della carta con il confronto colorato al posto di [[type:…]] (classi typeGood/typeBad/typeMissed). */
+  answer_html: string;
 }
 
 export type Rating = 1 | 2 | 3 | 4;

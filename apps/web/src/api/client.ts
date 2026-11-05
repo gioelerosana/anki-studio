@@ -12,6 +12,7 @@ import type {
   SyncResult,
   SyncStatus,
   TodayStats,
+  TypedAnswer,
 } from './types';
 
 export class ApiError extends Error {
@@ -64,6 +65,14 @@ export const api = {
   undo: (deckId: number) => request<StudyState>('POST', `/decks/${deckId}/study/undo`),
   bury: (cardId: number) => request<void>('POST', `/cards/${cardId}/bury`),
   suspend: (cardId: number) => request<void>('POST', `/cards/${cardId}/suspend`),
+  /** Come bury/suspend, ma risponde direttamente con la carta successiva del mazzo. */
+  buryAndNext: (cardId: number, deckId: number) =>
+    request<StudyState>('POST', `/cards/${cardId}/bury?deck_id=${deckId}`),
+  suspendAndNext: (cardId: number, deckId: number) =>
+    request<StudyState>('POST', `/cards/${cardId}/suspend?deck_id=${deckId}`),
+  /** Confronta la risposta digitata ({{type:Campo}}) come Anki e restituisce il retro. */
+  typeAnswer: (cardId: number, typed: string) =>
+    request<TypedAnswer>('POST', `/cards/${cardId}/type-answer`, { typed }),
   flag: (cardId: number, flag: number) => request<void>('POST', `/cards/${cardId}/flag`, { flag }),
 
   notetypes: () => request<Notetype[]>('GET', '/notetypes'),

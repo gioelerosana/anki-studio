@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from ..collection import CollectionManager
 from ..deps import get_manager
+from ..rendering import strip_bidi
 from ..schemas import Counts, DeckNode, TodayStats
 
 router = APIRouter(tags=["decks"])
@@ -44,5 +45,5 @@ def today_stats(manager: CollectionManager = Depends(get_manager)):
             reviews=reviews,
             seconds=ms // 1000,
             again=again,
-            summary=col.studied_today(),
+            summary=strip_bidi(col.studied_today()),
         )

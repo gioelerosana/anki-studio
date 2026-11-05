@@ -289,6 +289,13 @@ def _seed(col: Collection) -> dict[str, list[int]]:
     # mazzo vuoto: la PWA deve mostrare "niente da studiare"
     col.decks.id("Archivio")
 
+    # i mazzi nuovi nascono chiusi nella schermata principale: apriamo tutto
+    # tranne "Scienze", così la PWA vede entrambi i casi
+    for d in col.decks.all_names_and_ids():
+        deck = col.decks.get(d.id)
+        deck["collapsed"] = d.name == "Scienze"
+        col.decks.save(deck)
+
     return _distribute_queues(col)
 
 
