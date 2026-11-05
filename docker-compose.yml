@@ -1,45 +1,45 @@
-# Stack di Anki Studio: PWA (nginx) + API (FastAPI + motore Anki).
+# Anki Studio in locale o per un deploy di prova: l'immagine unica (PWA + API) costruita
+# dal Dockerfile alla radice, con lo stesso hardening previsto nello stack.
 #
 #   cp .env.example .env   # imposta ANKI_API_TOKEN
 #   docker compose up -d --build
 #
-# Esposizione su internet: la gestisce il Traefik dello stack principale, che va
-# collegato al servizio `web` (porta 80). Qui `web` è pubblicato solo su localhost
-# per i test; l'API non è mai esposta direttamente.
+# La PWA risponde su http://127.0.0.1:8080. In produzione l'immagine viene da GHCR e il
+# servizio sta nello stack principale: vedi deploy/stack/ e la sezione "Pubblicazione"
+# del README.
+#
+# Su myserv il daemon ha "bridge": "none": la build ha rete solo con un
+# docker-compose.override.yml (ignorato da git) che aggiunge `build: network: host`
+# al servizio `anki-studio`.
 name: anki-studio
 
 services:
-  api:
+  anki-studio:
     build:
-      context: ./backend
+      context: .
+      args:
+        VERSION: dev
+    image: anki-studio:local
     restart: unless-stopped
     env_file: .env
-    environment:
-      ANKI_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8080:8000"
     volumes:
       # collezione, media, backup e chiave di sync AnkiWeb. Backup: vedi backend/README.md.
       - anki-data:/data
     # richieste in corso (30 s) + attesa della sync in corso (30 s) + ultima sync (15 s):
     # Docker non deve uccidere il processo mentre scrive la collezione
     stop_grace_period: 120s
-    healthcheck:
-      # 200 anche durante una sync lunga ("busy"): un riavvio a metà sarebbe peggio
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:8080:80"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    # healthcheck: quello dell'immagine (GET /api/health ogni 30 s)
 
 volumes:
   anki-data:

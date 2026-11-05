@@ -13,3 +13,8 @@ __pycache__/
 .env
 data/
 backend/data/
+
+# override locali di docker compose (es. su myserv `build: network: host`, perché il
+# daemon ha "bridge": "none"): dipendono dalla macchina
+docker-compose.override.yml
+compose.override.yml

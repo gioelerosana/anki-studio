@@ -65,8 +65,10 @@ function devServiceWorkerReset(): Plugin {
   };
 }
 
-// Versione dell'app, mostrata nella UI.
-const appVersion: string = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')).version;
+// Versione dell'app, mostrata nella UI. Nell'immagine Docker arriva dal tag git della release
+// (APP_VERSION, build arg del Dockerfile), così PWA, /api/health e tag dell'immagine coincidono.
+const appVersion: string =
+  process.env.APP_VERSION || JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')).version;
 
 export default defineConfig({
   base: '/',
@@ -92,7 +94,7 @@ export default defineConfig({
     // Test dall'iPad via Tailscale (tailscale serve).
     allowedHosts: ['.ts.net'],
     // In sviluppo l'API gira a parte (pnpm dev:api): stessa origine grazie al proxy,
-    // come in produzione dove nginx fa lo stesso lavoro.
+    // come in produzione, dove la PWA la serve lo stesso processo dell'API.
     proxy: {
       '/api': { target: process.env.API_URL ?? 'http://127.0.0.1:8000', changeOrigin: true },
     },

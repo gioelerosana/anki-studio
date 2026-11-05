@@ -1,10 +1,20 @@
+# Contesto della build dell'immagine unica (Dockerfile alla radice): solo quello che serve.
 **/node_modules
 **/dist
 **/.venv
 **/__pycache__
 **/.pytest_cache
+**/*.egg-info
+**/*.tsbuildinfo
 .git
+.github
 .env
+.env.*
+.secrets
 data
 backend/data
 backend/tests
+deploy
+docs
+*.md
+docker-compose*.yml
