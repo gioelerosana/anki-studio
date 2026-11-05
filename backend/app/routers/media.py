@@ -6,9 +6,10 @@ from fastapi.responses import FileResponse
 
 from ..collection import CollectionManager
 from ..deps import get_manager
-from ..security import require_token_or_media_cookie
 
-router = APIRouter(tags=["media"], dependencies=[Depends(require_token_or_media_cookie)])
+# niente dipendenze qui: require_auth la aggiunge main.py, come per le altre rotte.
+# <img> e <audio> delle carte mandano da soli il cookie di sessione (stessa origine).
+router = APIRouter(tags=["media"])
 
 
 @router.get("/media/{filename}")

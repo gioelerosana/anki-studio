@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,7 +12,37 @@ class Settings(BaseSettings):
     # stampare nei log del container il valore del token o della password AnkiWeb
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
-    anki_api_token: str = Field(min_length=16)
+    # ---- accesso -------------------------------------------------------------
+    # La PWA entra con il login OIDC (Authentik): il backend è un client confidenziale,
+    # fa lo scambio del codice e tiene la sessione in un cookie HttpOnly (app/oidc.py).
+    # Nel browser non resta nessun token.
+    #
+    # URL pubblico dell'app, es. https://anki.jshep.xyz: da qui la redirect URI
+    # (<url>/api/auth/callback) e l'origine attesa per le richieste che modificano dati.
+    # Esplicito e non preso dall'header Host, che arriva dal client.
+    anki_public_url: str | None = None
+    # Issuer del provider, es. https://auth.jshep.xyz/application/o/anki-studio/
+    anki_oidc_issuer: str | None = None
+    anki_oidc_client_id: str | None = None
+    anki_oidc_client_secret: str | None = None
+    # Docker secret con il client secret (es. /run/secrets/anki_oidc_client_secret). Vince il file.
+    anki_oidc_client_secret_file: Path | None = None
+    anki_oidc_scopes: str = "openid profile email"
+    # Seconda barriera dopo le policy dell'applicazione su Authentik (separati da virgola):
+    # vuoti = basta che Authentik autorizzi l'utente. Utenti: preferred_username o email.
+    anki_oidc_allowed_users: str = ""
+    anki_oidc_allowed_groups: str = ""
+    # Durata della sessione della PWA. Scaduta, la PWA rifà da sola il login su Authentik
+    # (se la sessione di Authentik è ancora valida, senza chiedere niente).
+    anki_session_days: float = 30
+
+    # Solo sviluppo, senza Authentik: /api/auth/login apre subito una sessione "dev".
+    # Rifiutato se il processo serve anche la PWA (ANKI_WEB_DIR, cioè l'immagine Docker).
+    anki_dev_login: bool = False
+
+    # Facoltativo, per script e test (curl, smoke test): `Authorization: Bearer <token>`.
+    # La PWA non lo usa più; nello stack non va impostato.
+    anki_api_token: str | None = Field(default=None, min_length=16)
     # In alternativa al token in chiaro nell'ambiente: il percorso di un file che lo contiene
     # (Docker secret, es. /run/secrets/anki_api_token). Vince il file, se c'è.
     anki_api_token_file: Path | None = None
@@ -50,32 +81,87 @@ class Settings(BaseSettings):
     anki_studio_version: str = "dev"
     anki_studio_revision: str = ""
 
-    @field_validator("anki_web_dir", "anki_api_token_file", mode="before")
+    @field_validator(
+        "anki_web_dir",
+        "anki_api_token_file",
+        "anki_api_token",
+        "anki_oidc_client_secret_file",
+        "anki_oidc_client_secret",
+        "anki_oidc_issuer",
+        "anki_oidc_client_id",
+        "anki_public_url",
+        mode="before",
+    )
     @classmethod
     def _empty_is_none(cls, v):
         return None if v == "" else v
 
     @model_validator(mode="before")
     @classmethod
-    def _token_from_file(cls, data):
+    def _secrets_from_files(cls, data):
         if not isinstance(data, dict):
             return data
-        path = data.get("anki_api_token_file") or data.get("ANKI_API_TOKEN_FILE")
-        if not path:
-            return data
-        try:
-            token = Path(path).read_text(encoding="utf-8").strip()
-        except OSError as e:
-            # niente contenuto del file nel messaggio: solo il percorso e l'errore
-            raise ValueError(f"ANKI_API_TOKEN_FILE: impossibile leggere {path} ({e.strerror})") from None
-        return {**data, "anki_api_token": token}
+        for field in ("anki_api_token", "anki_oidc_client_secret"):
+            env = f"{field}_file".upper()
+            path = data.get(f"{field}_file") or data.get(env)
+            if not path:
+                continue
+            try:
+                value = Path(path).read_text(encoding="utf-8").strip()
+            except OSError as e:
+                # niente contenuto del file nel messaggio: solo il percorso e l'errore
+                raise ValueError(f"{env}: impossibile leggere {path} ({e.strerror})") from None
+            data = {**data, field: value}
+        return data
 
     @field_validator("anki_api_token")
     @classmethod
-    def _not_placeholder(cls, v: str) -> str:
+    def _not_placeholder(cls, v: str | None) -> str | None:
         if v == "cambia-questo-token":
-            raise ValueError("imposta un ANKI_API_TOKEN vero (vedi .env.example)")
+            raise ValueError("imposta un ANKI_API_TOKEN vero o toglilo (vedi .env.example)")
         return v
+
+    @field_validator("anki_public_url", "anki_oidc_issuer")
+    @classmethod
+    def _http_url(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("https://", "http://")):
+            raise ValueError("deve essere un URL http(s)://")
+        return v
+
+    @model_validator(mode="after")
+    def _oidc_complete(self):
+        oidc = (self.anki_oidc_issuer, self.anki_oidc_client_id, self.anki_oidc_client_secret)
+        if any(oidc) and not (all(oidc) and self.anki_public_url):
+            raise ValueError(
+                "OIDC incompleto: servono ANKI_PUBLIC_URL, ANKI_OIDC_ISSUER, "
+                "ANKI_OIDC_CLIENT_ID e ANKI_OIDC_CLIENT_SECRET(_FILE)"
+            )
+        return self
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.anki_oidc_issuer)
+
+    @property
+    def public_origin(self) -> str | None:
+        """Schema, host e porta di ANKI_PUBLIC_URL (come l'header Origin del browser)."""
+        if not self.anki_public_url:
+            return None
+        parts = urlsplit(self.anki_public_url)
+        return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def redirect_uri(self) -> str:
+        assert self.anki_public_url
+        return self.anki_public_url.rstrip("/") + "/api/auth/callback"
+
+    @property
+    def allowed_users(self) -> set[str]:
+        return {u.strip().lower() for u in self.anki_oidc_allowed_users.split(",") if u.strip()}
+
+    @property
+    def allowed_groups(self) -> set[str]:
+        return {g.strip() for g in self.anki_oidc_allowed_groups.split(",") if g.strip()}
 
     @property
     def collection_path(self) -> Path:
