@@ -29,12 +29,18 @@ const SCOPE_HINT: Record<TokenScope, string> = {
   read: 'Può solo leggere mazzi, tag e note.',
 };
 
-/** Come il backend ricava il tag `agent::<nome>` dal nome del token. */
+/**
+ * Come il backend ricava il tag `agent::<nome>` dal nome del token (`agent_slug` in tokens.py):
+ * NFKD, via tutto ciò che non è ASCII (quindi i segni diacritici: «Perché» → `perche`),
+ * minuscolo, ogni sequenza fuori da `a-z0-9` diventa `-`, niente `-` ai bordi. Se cambia di là,
+ * l'anteprima del tag qui sarebbe una promessa falsa.
+ */
 const agentSlug = (name: string) =>
   name
-    .trim()
+    .normalize('NFKD')
+    .replace(/[^\x00-\x7f]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
 export function AgentsSection() {
@@ -299,7 +305,7 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
         }}
       >
         {error ? <Banner variant="error">{describeError(error).message}</Banner> : null}
-        <Field label="Nome" hint={slug ? `Le sue note avranno il tag agent::${slug}` : 'Lettere, numeri e trattini'}>
+        <Field label="Nome" hint={slug ? `Le sue note avranno il tag agent::${slug}` : name.trim() ? 'Serve almeno una lettera o un numero (a-z, 0-9)' : 'Lettere, numeri e trattini'}>
           <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} size="lg" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} inputClassName="coarse:text-base" />
         </Field>
         <ScopeFields scope={scope} review={review} onScope={setScope} onReview={setReview} />
