@@ -40,6 +40,18 @@ services:
             - ANKI_OIDC_ISSUER=https://auth.jshep.xyz/application/o/anki-studio/
             - ANKI_OIDC_CLIENT_ID=anki-studio
             - ANKI_OIDC_CLIENT_SECRET_FILE=/run/secrets/anki_oidc_client_secret
+            # Server MCP per gli agenti (/mcp, stesso processo). Il secondo provider
+            # (auth/blueprints/anki-studio-mcp.yaml) serve all'app Claude: il backend NON ha
+            # bisogno del suo client secret, verifica la firma dei JWT con il JWKS pubblico
+            # dell'issuer (uscita verso auth.jshep.xyz, già consentita). I token `ask_…` per
+            # Hermes e gli script non dipendono da Authentik. Per spegnere /mcp: false.
+            - ANKI_MCP_ENABLED=true
+            - ANKI_MCP_OIDC_ISSUER=https://auth.jshep.xyz/application/o/anki-studio-mcp/
+            - ANKI_MCP_OIDC_CLIENT_ID=anki-studio-mcp
+            # Le note create da Claude via OAuth nascono come bozze (Inbox della PWA).
+            - ANKI_MCP_OAUTH_REVIEW=true
+            # Sync con AnkiWeb N secondi dopo una scrittura da agente (0 = spenta).
+            - ANKI_SYNC_AFTER_WRITE_SECONDS=30
             # Sync automatica con AnkiWeb ogni N minuti, oltre a quella all'avvio e allo stop.
             - ANKI_AUTO_SYNC_MINUTES=10
             - TZ=Europe/Rome
@@ -68,7 +80,7 @@ services:
         security_opt:
             - no-new-privileges:true
         labels:
-            # il routing sta nel file provider (traefik/config/services/anki-studio.yml)
+            # il routing sta nel file provider (traefik/config/anki-studio.yml)
             - "traefik.enable=false"
         logging: *default-logging
 
