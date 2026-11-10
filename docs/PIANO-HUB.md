@@ -124,10 +124,10 @@ per l'app Claude.
 
 ## Fasi
 
-- [ ] **1. Backend REST per gli agenti** — `app/hub.py`, `routers/hub.py`, token con scope e
+- [x] **1. Backend REST per gli agenti** — `app/hub.py`, `routers/hub.py`, token con scope e
       `review`, bozze, sync dopo la scrittura, test.
-- [ ] **2. PWA: Libreria, Inbox, Agenti** — contro il contratto sopra.
-- [ ] **3. Deploy e Authentik** — blueprint del secondo provider, Traefik per `/mcp` e
+- [x] **2. PWA: Libreria, Inbox, Agenti** — contro il contratto sopra.
+- [x] **3. Deploy e Authentik** (proposta pronta in `deploy/stack/`, da applicare a mano) — blueprint del secondo provider, Traefik per `/mcp` e
       `.well-known`, variabili, guide di collegamento per Claude e Hermes.
 - [x] **4. Server MCP + OAuth** — `app/mcp_server.py`, `app/mcp_auth.py`, verifica JWT, discovery, test.
 - [x] **5. Media** — `POST /api/media` e `add_media`.
