@@ -31,7 +31,10 @@ _MAX_LIMIT = 200
 
 
 def hub_http_error(e: hub.HubError) -> HTTPException:
-    code = status.HTTP_404_NOT_FOUND if e.kind == "not_found" else 422
+    code = {
+        "not_found": status.HTTP_404_NOT_FOUND,
+        "too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+    }.get(e.kind, 422)
     return HTTPException(code, str(e))
 
 

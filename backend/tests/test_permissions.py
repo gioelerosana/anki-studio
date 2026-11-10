@@ -1,5 +1,7 @@
 """Matrice "chi può cosa" (docs/PIANO-HUB.md): token read, token write, sessione, amministratore."""
 
+import base64
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -64,10 +66,14 @@ def forbidden_requests(ids):
     ]
 
 
+# un PNG minimo ma con la firma giusta: basta per il controllo del contenuto
+PNG_B64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
+
 WRITE_ONLY = [
     ("POST", "/api/hub/notes/batch", {"notes": [basic("zz")]}),
     ("POST", "/api/hub/decks", {"name": "Nuovo"}),
     ("POST", "/api/sync", None),
+    ("POST", "/api/media", {"filename": "gatto.png", "data_base64": PNG_B64}),
     ("PATCH", "/api/notes/{note}", {"fields": {"Back": "x"}}),
 ]
 
@@ -98,6 +104,8 @@ def test_write_token_writes_only_what_the_plan_allows(client, make_token, ids):
 
     assert call(client, "POST", "/api/hub/notes/batch", {"notes": [basic("zz")]}, headers).status_code == 200
     assert call(client, "POST", "/api/hub/decks", {"name": "Nuovo"}, headers).status_code == 200
+    media = {"filename": "gatto.png", "data_base64": PNG_B64}
+    assert call(client, "POST", "/api/media", media, headers).status_code == 201
     # senza AnkiWeb collegato la sync dice 401, ma la rotta è permessa (non 403)
     assert call(client, "POST", "/api/sync", None, headers).status_code != 403
 

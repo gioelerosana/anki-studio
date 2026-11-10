@@ -326,3 +326,16 @@ export interface ApiToken {
 export interface ApiTokenCreated extends ApiToken {
   token: string;
 }
+
+/** Un file da caricare nella cartella media (max 10 MB decodificati; immagini, audio, mp4/webm). */
+export interface MediaUpload {
+  /** Nome desiderato: il backend lo sanifica e Anki può cambiarlo se esiste già un file diverso. */
+  filename: string;
+  /** Solo il base64, senza il prefisso `data:…;base64,`. */
+  data_base64: string;
+}
+
+export interface MediaUploadResult {
+  /** Nome da usare nei campi: `<img src="…">` o `[sound:…]`. */
+  filename: string;
+}

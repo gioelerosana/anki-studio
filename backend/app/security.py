@@ -245,6 +245,7 @@ _WRITE_ROUTES = (
     ("POST", "/hub/notes/batch"),
     ("POST", "/hub/decks"),
     ("POST", "/sync"),
+    ("POST", "/media"),
     ("PATCH", r"/notes/\d+"),  # solo note proprie, vedi sopra
 )
 _READ_RE = re.compile("|".join(f"(?:{p})" for p in _READ_ROUTES))

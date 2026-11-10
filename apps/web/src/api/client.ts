@@ -18,6 +18,8 @@ import type {
   DraftDiscardResult,
   DraftList,
   HubSummary,
+  MediaUpload,
+  MediaUploadResult,
   NoteSearchResult,
   NoteTagsResult,
   Stats,
@@ -140,6 +142,9 @@ export const api = {
   deleteNote: (id: number) => request<void>('DELETE', `/notes/${id}`),
   editNoteTags: (noteIds: number[], change: { add?: string[]; remove?: string[] }) =>
     request<NoteTagsResult>('POST', '/notes/tags', { note_ids: noteIds, add: change.add ?? [], remove: change.remove ?? [] }),
+
+  /** Carica un'immagine, un audio o un video breve nei media della collezione (base64, max 10 MB). */
+  uploadMedia: (file: MediaUpload) => request<MediaUploadResult>('POST', '/media', file),
 
   /** Token per gli agenti (solo dalla sessione). Il token in chiaro si vede alla creazione e basta. */
   tokens: () => request<ApiToken[]>('GET', '/tokens'),

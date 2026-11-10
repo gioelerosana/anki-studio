@@ -17,7 +17,11 @@ Concetti (stessi del piano):
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
+import re
+import unicodedata
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Literal
@@ -39,6 +43,7 @@ from .schemas import (
     HubNoteIn,
     HubNoteResult,
     HubSummary,
+    MediaOut,
 )
 
 log = logging.getLogger(__name__)
@@ -61,13 +66,17 @@ _SUSPENDED = -1
 
 
 class HubError(Exception):
-    """Errore da riportare a chi chiama; `kind` lo traduce in 404 / 422 nelle rotte."""
+    """Errore da riportare a chi chiama; `kind` lo traduce in 404 / 422 / 413 nelle rotte."""
 
-    kind: Literal["not_found", "invalid"] = "invalid"
+    kind: Literal["not_found", "invalid", "too_large"] = "invalid"
 
 
 class NotFound(HubError):
     kind = "not_found"
+
+
+class TooLarge(HubError):
+    kind = "too_large"
 
 
 # ---- tag -----------------------------------------------------------------------------
@@ -569,3 +578,120 @@ def change_tags(col: Collection, note_ids: list[int], add: list[str], remove: li
         col.merge_undo_entries(target)
     after = dict(col.db.execute(f"select id, tags from notes where id in {_ids_sql(ids)}"))
     return sum(1 for i in ids if before[i] != after[i])
+
+
+# ---- media ---------------------------------------------------------------------------
+#
+# Un agente può caricare immagini e audio da usare nei campi (`<img src="…">`, `[sound:…]`).
+# Il tetto e la lista dei formati sono qui, in un posto solo, per la REST e per il server MCP.
+# I file finiscono nella cartella media della collezione e viaggiano con la sync dei media.
+
+MAX_MEDIA_BYTES = 10 * 1024 * 1024
+# 4 caratteri di base64 ogni 3 byte: oltre questa lunghezza non vale nemmeno la pena decodificare
+_MAX_MEDIA_B64 = (MAX_MEDIA_BYTES + 2) // 3 * 4 + 4
+_MAX_NAME_LEN = 100
+
+
+def _starts(*prefixes: bytes):
+    return lambda d: d.startswith(prefixes)
+
+
+def _riff(kind: bytes):
+    return lambda d: d[:4] == b"RIFF" and d[8:12] == kind
+
+
+def _is_mp3(d: bytes) -> bool:
+    # ID3 oppure un frame MPEG (11 bit di sync a 1)
+    return d.startswith(b"ID3") or (len(d) > 1 and d[0] == 0xFF and d[1] & 0xE0 == 0xE0)
+
+
+def _is_adts(d: bytes) -> bool:
+    return len(d) > 1 and d[0] == 0xFF and d[1] & 0xF6 == 0xF0
+
+
+def _is_svg(d: bytes) -> bool:
+    head = d[:2048].decode("utf-8", "ignore").lstrip("﻿ \t\r\n").lower()
+    return head.startswith(("<svg", "<?xml", "<!doctype svg", "<!--")) and "<svg" in head
+
+
+# estensione → (tipo, controllo sul contenuto). L'estensione deve corrispondere al contenuto:
+# un `.png` che è un eseguibile, o un `.mp3` che è HTML, si rifiuta.
+_MEDIA_TYPES: dict[str, tuple[str, object]] = {
+    "png": ("immagine", _starts(b"\x89PNG\r\n\x1a\n")),
+    "jpg": ("immagine", _starts(b"\xff\xd8\xff")),
+    "jpeg": ("immagine", _starts(b"\xff\xd8\xff")),
+    "gif": ("immagine", _starts(b"GIF87a", b"GIF89a")),
+    "webp": ("immagine", _riff(b"WEBP")),
+    "svg": ("immagine", _is_svg),
+    "mp3": ("audio", _is_mp3),
+    "ogg": ("audio", _starts(b"OggS")),
+    "wav": ("audio", _riff(b"WAVE")),
+    "m4a": ("audio", lambda d: d[4:8] == b"ftyp"),
+    "aac": ("audio", _is_adts),
+    "flac": ("audio", _starts(b"fLaC")),
+    "mp4": ("video", lambda d: d[4:8] == b"ftyp"),
+    "webm": ("video", _starts(b"\x1a\x45\xdf\xa3")),
+}
+MEDIA_EXTENSIONS = tuple(_MEDIA_TYPES)
+
+# script nell'SVG: i media sono serviti con una CSP `sandbox` (security._MEDIA_CSP) e un <img>
+# non esegue mai script, ma un agente non ha motivo di scriverne: meglio non portarli in
+# giro nella collezione (finiscono anche su AnkiWeb e sugli altri dispositivi)
+_SVG_ACTIVE = re.compile(r"<\s*script|<\s*foreignobject|\son[a-z]+\s*=|javascript\s*:", re.I)
+# lista bianca: lettere (anche accentate), cifre, `_`, `.` e `-`; il resto diventa `_`
+_UNSAFE_NAME_CHARS = re.compile(r"[^\w.\-]+")
+
+
+def clean_media_name(raw: str) -> str:
+    """Un nome file sicuro: niente percorsi, niente `..`, niente caratteri di controllo, spazi
+    o simboli che romperebbero `<img src>` e `[sound:…]`, niente nome "nascosto" (che inizia
+    con un punto), lunghezza limitata (l'estensione si conserva). Il nome definitivo lo decide
+    comunque Anki (`write_data`), che può cambiarlo se esiste già un file diverso."""
+    name = unicodedata.normalize("NFC", raw)
+    name = re.split(r"[\\/]", name)[-1]  # solo l'ultimo componente di un eventuale percorso
+    name = _UNSAFE_NAME_CHARS.sub("_", name)
+    name = re.sub(r"\.{2,}", ".", name).strip("._ ")
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    stem = stem.strip("._ ")
+    if len(stem) > _MAX_NAME_LEN - len(ext) - 1:
+        stem = stem[: _MAX_NAME_LEN - len(ext) - 1].rstrip("._ ")
+    if not stem:
+        raise HubError("Nome file non valido: serve un nome (es. «gatto.png»)")
+    return f"{stem}.{ext}" if ext else stem
+
+
+def add_media(col: Collection, filename: str, data_base64: str) -> MediaOut:
+    """Valida e scrive un file nella cartella media. Il nome restituito è quello da usare
+    nei campi (`<img src="…">` o `[sound:…]`)."""
+    name = clean_media_name(filename)
+    ext = name.rpartition(".")[2].lower() if "." in name else ""
+    if ext not in _MEDIA_TYPES:
+        raise HubError(
+            f"Estensione «{ext or '(nessuna)'}» non ammessa: usa una di {', '.join(MEDIA_EXTENSIONS)}"
+        )
+
+    payload = "".join(data_base64.split())  # il base64 a capo ogni 76 caratteri è valido
+    if payload.startswith("data:"):
+        raise HubError("Passa solo il base64 del file, senza il prefisso «data:…;base64,»")
+    if len(payload) > _MAX_MEDIA_B64:
+        raise TooLarge(f"File troppo grande: al massimo {MAX_MEDIA_BYTES // (1024 * 1024)} MB")
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise HubError("data_base64 non è base64 valido (alfabeto standard, con il padding)") from None
+    if not data:
+        raise HubError("Il file è vuoto")
+    if len(data) > MAX_MEDIA_BYTES:
+        raise TooLarge(f"File troppo grande: al massimo {MAX_MEDIA_BYTES // (1024 * 1024)} MB")
+
+    kind, matches = _MEDIA_TYPES[ext]
+    if not matches(data):  # type: ignore[operator]
+        raise HubError(f"Il contenuto non è un {kind} «.{ext}» valido: estensione e contenuto non coincidono")
+    if ext == "svg" and _SVG_ACTIVE.search(data.decode("utf-8", "ignore")):
+        raise HubError("L'SVG contiene script o elementi attivi: non ammessi")
+
+    final = col.media.write_data(name, data)
+    log.info("Media aggiunto", extra={"media_file": final, "size": len(data)})
+    return MediaOut(filename=final)
