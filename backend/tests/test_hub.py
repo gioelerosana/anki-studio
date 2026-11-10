@@ -75,6 +75,15 @@ def test_batch_per_note_errors_do_not_stop_the_others(client):
     assert note_count(client) == 5
 
 
+def test_unknown_notetype_error_lists_the_available_ones(client):
+    """I nomi dei tipi di nota dipendono dalla lingua della collezione: l'errore deve
+    dire all'agente come correggersi."""
+    out = post_batch(client, [{"deck": "D", "notetype": "Nome sbagliato", "fields": {"Front": "a"}}], create_missing_decks=True)
+    err = out["results"][0]["error"]
+    assert out["results"][0]["status"] == "error"
+    assert "Disponibili" in err and "«Basic»" in err
+
+
 def test_batch_cap_is_100(client):
     assert client.post(BATCH, json={"notes": [basic(f"n{i}") for i in range(101)]}).status_code == 422
     assert client.post(BATCH, json={"notes": []}).status_code == 422

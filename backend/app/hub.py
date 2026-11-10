@@ -330,7 +330,10 @@ def _plan_note(
 ) -> _Item:
     model = _resolve_notetype(col, spec.notetype)
     if model is None:
-        return _error(index, f"Tipo di nota «{spec.notetype}» non trovato")
+        # i nomi dei tipi di nota seguono la lingua della collezione ("Basic" in inglese,
+        # "Base" in italiano): senza l'elenco l'agente non ha modo di correggersi da solo
+        names = ", ".join(f"«{n.name}»" for n in col.models.all_names_and_ids())
+        return _error(index, f"Tipo di nota «{spec.notetype}» non trovato. Disponibili: {names}")
     mid = int(model["id"])
     field_names = {f["name"] for f in model["flds"]}
     unknown = sorted(set(spec.fields) - field_names)
