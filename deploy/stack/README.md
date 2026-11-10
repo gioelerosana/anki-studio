@@ -7,8 +7,9 @@ seguendo le regole dello stack (`AGENTS.md`, `docs/infrastructure/04-maintenance
 | File qui | Dove va nello stack |
 |---|---|
 | `COMPOSE/compose.anki-studio.yml` | `COMPOSE/compose.anki-studio.yml` + una riga in `include:` di `compose.yml` |
-| `traefik/config/services/anki-studio.yml` | `traefik/config/services/anki-studio.yml` |
+| `traefik/config/services/anki-studio.yml` | `traefik/config/anki-studio.yml` (la cartella di Traefik è piatta) |
 | `auth/blueprints/anki-studio-oidc.yaml` | `auth/blueprints/anki-studio-oidc.yaml` (provider e applicazione Authentik) |
+| `auth/blueprints/anki-studio-mcp.yaml` | `auth/blueprints/anki-studio-mcp.yaml` (secondo provider, per il connettore di Claude: [Collegare gli agenti](#collegare-gli-agenti-claude-e-hermes)) |
 | `scripts/update-anki-studio.sh` | `scripts/update-anki-studio.sh` (facoltativo, auto-update controllato) |
 
 Il Compose è già pinnato a `ghcr.io/gioelerosana/anki-studio:26.0.1@sha256:0f84ee26…` (release
@@ -127,7 +128,7 @@ sono file normali e sono comunque anche su AnkiWeb. Il ripristino è descritto i
 
 ```bash
 cp …/deploy/stack/COMPOSE/compose.anki-studio.yml COMPOSE/
-cp …/deploy/stack/traefik/config/services/anki-studio.yml traefik/config/services/
+cp …/deploy/stack/traefik/config/services/anki-studio.yml traefik/config/anki-studio.yml
 # compose.yml: aggiungi COMPOSE/compose.anki-studio.yml alla lista di include
 # Taskfile.yml: aggiungi anki-studio a SERVICES_WITH_HEALTHCHECK
 task validate
@@ -157,6 +158,185 @@ separati da Safari, quindi al primo avvio rifà il login (una volta: la sessione
 prova va reinstallata.
 Se i dati arrivano dal deploy di prova, il collegamento AnkiWeb c'è già
 (`GET /api/sync` → `logged_in: true`); altrimenti fai il login da Impostazioni → AnkiWeb.
+
+## Collegare gli agenti (Claude e Hermes)
+
+Anki Studio ha un server MCP (`https://anki.jshep.xyz/mcp`, stesso container, stesso processo)
+con cui gli agenti creano flashcard: arrivano come **bozze** nell'Inbox della PWA, le approvi
+tu, poi viaggiano su AnkiWeb con la sync. Il disegno e gli strumenti sono in
+[`docs/PIANO-HUB.md`](../../docs/PIANO-HUB.md). Ci sono due modi per entrare, con gli stessi
+permessi dell'utente:
+
+| Chi | Come si autentica | Cosa serve |
+|---|---|---|
+| **App Claude** (web, desktop, mobile) | OAuth con Authentik, secondo provider `anki-studio-mcp` | blueprint, client ID e secret incollati nel connettore |
+| **Hermes Agent**, Claude Code, script | `Authorization: Bearer ask_…` | un token creato nella PWA (Impostazioni → Agenti) |
+
+Serve un'immagine di Anki Studio che includa il server MCP (versione indicata nelle note di
+release). Il Compose proposto ha già le variabili (`ANKI_MCP_*`, `ANKI_SYNC_AFTER_WRITE_SECONDS`),
+il router di Traefik per `/mcp` è in `traefik/config/services/anki-studio.yml`: dopo averli
+copiati, `docker compose up -d --no-deps anki-studio` ricrea il container.
+
+### A. Authentik: secondo provider per Claude
+
+```bash
+cd /home/ubuntu/stack
+cp …/deploy/stack/auth/blueprints/anki-studio-mcp.yaml auth/blueprints/
+docker exec authentik ak apply_blueprint /blueprints/custom/anki-studio-mcp.yaml   # DOPO anki-studio-oidc.yaml
+```
+
+Crea provider e applicazione `anki-studio-mcp` (issuer
+`https://auth.jshep.xyz/application/o/anki-studio-mcp/`) e li lega alla stessa policy della PWA
+(`anki-studio-admins-only`: solo superuser e "authentik Admins"). I campi del blueprint sono
+stati controllati sullo schema dei blueprint di Authentik 2026.8.5.
+
+- **Client ID e secret**: il client ID è `anki-studio-mcp`. Il secret lo genera Authentik alla
+  prima applicazione (come per la PWA, il blueprint non lo dichiara): leggilo da Admin →
+  Applicazioni → Provider → Anki Studio MCP → Modifica → Client Secret (da controllare nella UI
+  dove sta nella tua versione). Serve **solo a Claude**: il backend non lo usa e non va nel
+  Compose né in `.secrets/`; tienine una copia nel password manager.
+- **Niente registrazione dinamica (DCR)**: quella di Authentik richiede un token con lo scope
+  `goauthentik.io/oidc/dcr` e crea una nuova applicazione e un nuovo provider a *ogni*
+  registrazione. Per questo il client è pre-registrato e il discovery del provider non annuncia
+  nessun `registration_endpoint`: non aggiungere una configurazione DCR al provider.
+- **Firma**: il blueprint usa la chiave "authentik Self-signed Certificate" (RSA → RS256, con
+  JWKS pubblico in `…/anki-studio-mcp/jwks/`). Per usarne un'altra cambia `signing_key` nel
+  blueprint o, nella UI, Provider → Modifica → Signing Key. Senza chiave Authentik firmerebbe
+  con HS256 e il backend non potrebbe verificare niente. Se la chiave fosse una EC (ES256),
+  il backend deve accettarla: da controllare in Sistema → Certificati.
+- **Durata**: access token **15 minuti** (Claude lo rinnova 5 minuti prima della scadenza: con
+  5 minuti rinnoverebbe di continuo; un JWT non si revoca, scade), refresh token **90 giorni**
+  con rotazione solo negli ultimi 30 (la connessione sopravvive a settimane di inattività e
+  una risposta persa non la rompe).
+- **Claim**: il backend controlla utenti e gruppi con `preferred_username` e `groups`, che
+  Authentik mette nell'access token (`include_claims_in_id_token`) solo se lo scope `profile`
+  è stato richiesto: lo annuncia il backend nei metadati. `aud` è il client ID.
+- **Redirect URI**: solo `https://claude.ai/api/mcp/auth_callback`, `strict`, uguale per web,
+  desktop e mobile (la connessione parte dal cloud di Anthropic, non dal dispositivo).
+
+### B. Rete: cosa deve poter raggiungere Claude
+
+Le richieste di Claude partono dall'infrastruttura di Anthropic (`160.79.104.0/21`), non dal
+tuo dispositivo: il server e Authentik devono essere raggiungibili da internet. Controllato
+sullo stack:
+
+- `anki.jshep.xyz` e `auth.jshep.xyz` hanno un record A pubblico (IPv4, non Tailscale né
+  privato: Claude rifiuta nomi che risolvono a indirizzi non pubblici e non usa IPv6). Il deploy
+  di prova su Tailscale basta per Hermes, **non** per l'app Claude.
+- Nessun WAF, CrowdSec, filtro geografico o `ipAllowList` nella configurazione di Traefik e dei
+  Compose davanti ai due host (il firewall del provider cloud e nftables in ingresso non si
+  vedono da qui: da controllare che la 443 sia aperta a tutta internet); il router
+  `anki-studio-router` non ha forward-auth né redirect di login, e quello di Authentik ha il
+  `loginRateLimit` solo sulle POST di `/api/v3/flows/executor/` (il login nel browser), non sul
+  token endpoint. Se aggiungi un filtro, lascia passare `160.79.104.0/21` su `/mcp`,
+  `/.well-known/` e su tutto `auth.jshep.xyz`.
+- `anki-studio-mcp-router` (in `traefik/config/services/anki-studio.yml`) serve `/mcp` e
+  `/.well-known/oauth-protected-resource` con la sola `securityHeaders`: niente `compress`
+  (le risposte SSE dello streamable HTTP non vanno ricompresse né trattenute) e niente rate
+  limit per IP, perché gli IP di Claude sono pochi e condivisi (i tentativi sbagliati li limita
+  il backend). Timeout dell'entrypoint: `writeTimeout 0` e `idleTimeout 360s`, sufficienti.
+- `/mcp` non deve reindirizzare: Claude perde l'header `Authorization` se il redirect cambia
+  host. Usa l'URL esatto `https://anki.jshep.xyz/mcp` (senza `/` finale).
+- Claude dà 10 secondi a discovery e token endpoint (30 ai refresh): `/mcp`, i metadati e
+  Authentik devono rispondere subito.
+
+Verifica da **fuori** (un'altra rete, non dal server; con il backend MCP in esecuzione):
+
+```bash
+# 401 con WWW-Authenticate (NON un 200 HTML né un redirect)
+curl -si https://anki.jshep.xyz/mcp -X POST -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' -d '{}' | sed -n '1p;/^www-authenticate/Ip'
+# metadati della risorsa: resource = https://anki.jshep.xyz/mcp, un solo authorization_servers
+curl -s https://anki.jshep.xyz/.well-known/oauth-protected-resource
+# discovery di Authentik: S256 presente, nessun registration_endpoint, offline_access tra gli scope
+curl -s https://auth.jshep.xyz/application/o/anki-studio-mcp/.well-known/openid-configuration \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['issuer'], d['code_challenge_methods_supported'], d['scopes_supported'], d.get('registration_endpoint'))"
+curl -s https://auth.jshep.xyz/application/o/anki-studio-mcp/jwks/ | head -c 200      # {"keys":[{"kty":"RSA",…
+# con un token ask_…: initialize risponde, e lo stream non resta bufferizzato dal proxy
+curl -sN https://anki.jshep.xyz/mcp -H 'Authorization: Bearer ask_…' -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+### C. App Claude (web, desktop, mobile)
+
+1. In Claude: **Customize → Connectors → Add → Add custom connector** (a seconda della versione
+   dell'app: Impostazioni → Connettori → Aggiungi connettore personalizzato; su Team ed
+   Enterprise lo aggiunge un Owner da Organization settings → Connectors).
+2. Nome `Anki Studio`, URL `https://anki.jshep.xyz/mcp`.
+3. In **Advanced settings** (o nel secondo passaggio del dialogo): *Authentication* → *Sign in now*;
+   *OAuth client* → **Use your own OAuth client**; **client ID** `anki-studio-mcp` e **client
+   secret** del passo A. Non scegliere "Register automatically" né "Use Claude's published
+   identity": Authentik non supporta nessuno dei due.
+4. **Add**, poi **Connect**: si apre Authentik (login con MFA/passkey, `smart-login-flow`) e si
+   torna in Claude. Il collegamento vale per web, desktop e mobile con lo stesso account Claude.
+5. Gli strumenti si accendono per conversazione dal **+ → Connectors**. In Customize →
+   Connectors → Anki Studio puoi bloccare i singoli strumenti.
+
+Le impostazioni di autenticazione non si cambiano dopo averlo aggiunto: se ruoti il secret su
+Authentik, rimuovi il connettore e aggiungilo di nuovo. Le note create da Claude nascono bozza
+(`ANKI_MCP_OAUTH_REVIEW=true`) con il tag `agent::claude`.
+
+### D. Hermes Agent (e altri client con Bearer)
+
+1. Nella PWA: **Impostazioni → Agenti**, crea un token (nome `hermes`, scope `write`, bozze
+   attive, cioè `review`). Il token `ask_…` si vede una volta sola: copialo subito.
+2. Nella configurazione di Hermes (`~/.hermes/config.yaml`, nel container di myserv
+   `/opt/data/config.yaml`: da controllare) aggiungi il server HTTP sotto `mcp_servers`
+   (formato dalla [documentazione di Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)):
+
+   ```yaml
+   mcp_servers:
+     anki:
+       url: "https://anki.jshep.xyz/mcp"
+       headers:
+         Authorization: "Bearer ${ANKI_MCP_TOKEN}"
+       timeout: 60
+       connect_timeout: 30
+   ```
+
+   Hermes sostituisce `${VAR}` dalle variabili d'ambiente e da `~/.hermes/.env` (la
+   documentazione lo descrive per i manifest del catalogo: se nella tua versione non lo
+   sostituisce, scrivi il token in chiaro e tieni il file a `0600`). Su myserv il file `.env` di
+   Hermes è dentro il dataset di backup e i segreti si passano come Docker secret
+   (`scripts/hermes-secrets.sh`): usa lo stesso meccanismo per `ANKI_MCP_TOKEN` e metti il
+   blocco `mcp_servers` nell'overlay gestito. `auth: oauth` non serve: per Hermes basta il Bearer.
+3. Nella sessione di Hermes: `/reload-mcp` (ricarica i server MCP e l'elenco degli strumenti;
+   un gateway già avviato rilegge `config.yaml` da solo in circa un minuto).
+4. Prova: chiedi a Hermes di elencare i mazzi (`list_decks`).
+
+L'URL deve essere quello pubblico: il container di Hermes sta su una rete che rifiuta gli
+indirizzi privati (`untrusted_fetchers_v4`), quindi niente `http://anki-studio:8000/mcp`. Lo
+stesso vale per Claude Code e gli script: `Authorization: Bearer ask_…` e mai il token
+nella query string.
+
+### E. Risoluzione dei problemi
+
+| Sintomo | Cosa controllare |
+|---|---|
+| **«Couldn't reach the MCP server»** (Claude) | Non vuol dire sempre "rete": è la stessa frase per più cause. In ordine: il nome risolve a un IPv4 pubblico (`getent ahostsv4 anki.jshep.xyz` da fuori); `/mcp` risponde `401` con `WWW-Authenticate: Bearer resource_metadata=…` e non `200` (una pagina HTML = la PWA sta rispondendo al posto del server MCP: immagine senza MCP o `ANKI_MCP_ENABLED=false`) né un redirect; `/.well-known/oauth-protected-resource` risponde `200` con `resource` uguale all'URL scritto in Claude; la discovery di Authentik risponde; nessun filtro blocca `160.79.104.0/21` (cerca 403/429 in `traefik/logs/access.log` durante il tentativo). Il server non vede richieste di Claude e Authentik non vede niente: è un problema di discovery o di rete. |
+| **«Authorization with the MCP server failed»** | Client ID o secret sbagliati (rimuovi e riaggiungi il connettore); redirect URI diversa da `https://claude.ai/api/mcp/auth_callback`; utente non ammesso dalla policy (Authentik → Eventi) o da `ANKI_OIDC_ALLOWED_USERS/_GROUPS`; `ANKI_MCP_OIDC_ISSUER` diverso dall'issuer reale (barra finale compresa) o `ANKI_MCP_OIDC_CLIENT_ID` diverso dal client ID (`aud`); token endpoint oltre 10 secondi. Nell'URL dell'errore c'è un `ofid_…`: ti serve per segnalarlo ad Anthropic. |
+| **Il connettore funziona poi smette** | Il refresh token è scaduto (90 giorni) o revocato in Authentik, oppure hai ruotato il secret: ricollega. Un access token revocato o scaduto vale al massimo 15 minuti. |
+| **`401` da Hermes o da uno script** | Header senza `Bearer `, token copiato male, token **revocato** nella PWA (Impostazioni → Agenti), oppure URL con redirect. Dopo troppi tentativi sbagliati il backend risponde `429`: aspetta. Dopo aver cambiato il token, `/reload-mcp`. |
+| **`403`** | Il token ha scope `read`, o prova a modificare una nota che non porta il suo tag `agent::<nome>`. |
+| **«Unexpected error while invoking tool»** | Il connettore è collegato ma lo strumento ha fallito: `docker logs anki-studio --tail 50` (log JSON, senza segreti). |
+| **Le carte create non compaiono nello studio** | Sono bozze (carte sospese): approvale dall'Inbox. Dopo l'approvazione la sync con AnkiWeb parte entro `ANKI_SYNC_AFTER_WRITE_SECONDS` (30 s); `0` la spegne. |
+
+### F. Sicurezza
+
+- I token `ask_…` e l'accesso OAuth sono **dell'utente**: chi li ha scrive nella tua
+  collezione. Un token ha nome, scope e `review`, si vede l'ultimo uso e si revoca dalla PWA.
+  Per Claude con OAuth lo scope è `write` con bozze obbligatorie.
+- Gli agenti **non hanno strumenti distruttivi**: niente cancellazione, approvazione delle
+  bozze, sync completa o modifica dei tipi di nota. Cancellare e approvare sono gesti tuoi
+  nella PWA, con conferma (regola 1 di `AGENTS.md`).
+- Il testo che un agente legge dalla collezione (`search_notes`, `get_note`) è dato non fidato
+  (può contenere istruzioni): in Claude non scegliere "Always allow" se non ti fidi, e blocca
+  gli strumenti che non ti servono.
+- Il JWT di Authentik vale per un solo client (`aud`): il login della PWA non apre `/mcp`.
+  Il client secret del connettore sta solo su Authentik e in Claude, mai nel container.
+- Ogni nota creata da un agente porta il tag `agent::<nome>`: nella Libreria della PWA vedi cosa
+  ha scritto chi.
 
 ## Migrazione dei dati dal deploy di prova
 
