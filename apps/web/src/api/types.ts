@@ -274,6 +274,8 @@ export interface DraftNote {
   agent: string | null;
   /** Secondi epoch. */
   created: number;
+  /** Ultima modifica, secondi epoch: si rimanda in `expected_mod` per approvare/scartare ciò che si è visto. */
+  modified: number;
 }
 
 export interface DraftList {
@@ -283,10 +285,13 @@ export interface DraftList {
 
 export interface DraftApproveResult {
   approved: number;
+  /** Note saltate: cambiate dopo che l'utente le ha viste, o non più bozze. */
+  skipped_ids: number[];
 }
 
 export interface DraftDiscardResult {
   discarded: number;
+  skipped_ids: number[];
 }
 
 export interface NoteTagsResult {

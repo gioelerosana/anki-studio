@@ -133,9 +133,12 @@ export const api = {
   hubSummary: () => request<HubSummary>('GET', '/hub/summary'),
   drafts: (limit = 50, offset = 0) =>
     request<DraftList>('GET', `/hub/drafts?${new URLSearchParams({ limit: String(limit), offset: String(offset) })}`),
-  approveDrafts: (noteIds: number[]) => request<DraftApproveResult>('POST', '/hub/drafts/approve', { note_ids: noteIds }),
+  /** `expectedMod`: id nota → `modified` visto; le note cambiate nel frattempo vengono saltate (`skipped_ids`). */
+  approveDrafts: (noteIds: number[], expectedMod?: Record<number, number>) =>
+    request<DraftApproveResult>('POST', '/hub/drafts/approve', { note_ids: noteIds, expected_mod: expectedMod }),
   /** Cancella le bozze scelte (solo quelle: mai note normali). Chiedi sempre conferma prima. */
-  discardDrafts: (noteIds: number[]) => request<DraftDiscardResult>('POST', '/hub/drafts/discard', { note_ids: noteIds }),
+  discardDrafts: (noteIds: number[], expectedMod?: Record<number, number>) =>
+    request<DraftDiscardResult>('POST', '/hub/drafts/discard', { note_ids: noteIds, expected_mod: expectedMod }),
   cardPreview: (cardId: number) => request<CardPreview>('GET', `/cards/${cardId}/preview`),
   moveNote: (id: number, deckId: number) => request<Note>('POST', `/notes/${id}/move`, { deck_id: deckId }),
   /** Cancella la nota con le sue carte. Solo dalla sessione della PWA; chiedi sempre conferma. */

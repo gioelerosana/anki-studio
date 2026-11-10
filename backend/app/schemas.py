@@ -384,6 +384,9 @@ class DraftNote(BaseModel):
     agent: str | None
     # secondi epoch (dall'id della nota)
     created: int
+    # ultima modifica, secondi epoch: la PWA la rimanda in `expected_mod` per approvare/scartare
+    # esattamente ciò che l'utente ha visto
+    modified: int = 0
 
 
 class DraftList(BaseModel):
@@ -393,16 +396,22 @@ class DraftList(BaseModel):
 
 class NoteIdsIn(BaseModel):
     note_ids: list[int] = Field(min_length=1, max_length=500)
+    # id nota → `modified` visto dall'utente. Se la nota è cambiata nel frattempo (per
+    # esempio un agente ha aggiornato la bozza) viene saltata e finisce in `skipped_ids`.
+    expected_mod: dict[int, int] | None = None
 
 
 class DraftApproveOut(BaseModel):
     # note passate da bozza a normali (carte riattivate, tag `hub::bozza` tolto)
     approved: int
+    # note non toccate perché modificate dopo che l'utente le ha viste (o non più bozze)
+    skipped_ids: list[int] = []
 
 
 class DraftDiscardOut(BaseModel):
     # note cancellate: solo quelle che erano davvero bozze, mai altre
     discarded: int
+    skipped_ids: list[int] = []
 
 
 class NoteMoveIn(BaseModel):
