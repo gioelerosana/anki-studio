@@ -22,8 +22,9 @@ un solo `RLock`), quindi niente servizio separato.
   stessa nota la aggiorna (o la lascia com'è) invece di duplicarla. Il tag viaggia con la sync.
 - **Bozze.** Una nota in bozza ha le carte **sospese** (non entrano nello studio) e il tag
   `hub::bozza`. Dalla PWA (Inbox) la si **approva** (carte riattivate, tag tolto) o la si
-  **scarta** (cancellata, solo se è davvero una bozza). Ogni token ha `review`: se vero, le sue
-  note nascono bozza e non può forzare il contrario. La sessione della PWA crea note normali.
+  **scarta** (cancellata, solo se è davvero una bozza: tutte le carte sospese e mai ripassate). Ogni token
+  ha `review`: se vero, le sue note nascono bozza, non può forzare il contrario e **una modifica a una nota
+  già approvata la rimette in bozza**. La sessione della PWA crea note normali.
 - **Sync dopo la scrittura.** Dopo una scrittura da agente la sync parte da sola dopo
   `ANKI_SYNC_AFTER_WRITE_SECONDS` (default 30, `0` = spenta), con più scritture raggruppate in
   una sola sync. Se AnkiWeb non è collegato non fa niente.
@@ -164,9 +165,39 @@ per l'app Claude.
 - **Annotazioni**: `destructiveHint` solo su `update_note` (sovrascrive campi); `add_notes` è non
   distruttivo e idempotente (l'aggiornamento via `external_id` tocca solo la nota che l'agente ha creato).
 - **Media**: tetto 10 MB decodificati (il trasporto MCP ha il suo tetto a 15 MB perché il base64 pesa
-  1/3 in più), solo estensioni note e con la firma del contenuto coerente, SVG senza script. I media escono
-  già con CSP `sandbox` (`security._MEDIA_CSP`, verificato da `tests/test_media.py`): anche un SVG aperto a
-  mano non esegue niente sulla nostra origine.
+  1/3 in più), solo estensioni note e con la firma del contenuto coerente. **Niente SVG**: un filtro a
+  espressioni regolari si aggira (`<svg/onload=…>`, entità, `href` esterni) e il file viaggerebbe con la sync;
+  si usano PNG, JPG o WebP. I media escono comunque con CSP `sandbox` (`security._MEDIA_CSP`, verificato da
+  `tests/test_media.py`): anche un `.svg` arrivato dalla sync e aperto a mano non esegue niente sulla nostra origine.
+
+### Decisioni dopo la revisione indipendente
+
+- **`review` non si aggira.** Con `review`, rimandare lo stesso `external_id`, `PATCH /notes/{id}` o i
+  tool MCP `add_notes`/`update_note` su una nota non bozza la rimette in bozza (tag `hub::bozza` + carte
+  sospese), ma solo se la modifica cambia davvero qualcosa. Senza `review` lo stato non cambia. Un solo
+  punto: `hub.redraft` (+ `hub.suspend_draft_cards`).
+- **Bozza = nessuna carta attiva.** Dopo ogni modifica di una nota con `hub::bozza` (token, `PATCH` della
+  sessione, Inbox) si sospendono tutte le carte non sospese: una cloze con `{{c2::…}}` in più ne genera una.
+- **Blocco dei Bearer sbagliati.** Il limite per IP vale solo per le richieste che presentano un `Bearer`
+  (REST e `/mcp`): la sessione col cookie non si ferma mai. Un Bearer che corrisponde a un token **revocato**
+  è 401 senza contare (in `tokens.json` restano gli hash dei revocati, massimo 500, mai il chiaro); un
+  token mai esistito conta. I login OIDC falliti hanno un contatore a parte che ferma solo il callback.
+- **Approva/scarta ciò che si è visto.** `DraftNote.modified` = `note.mod` (secondi), `NoteIdsIn.expected_mod`,
+  `skipped_ids` in `DraftApproveOut`/`DraftDiscardOut` (contratto già in `schemas.py`/`types.ts`).
+  Salta anche ciò che non è più bozza o non esiste. Limite noto: `mod` è al secondo, una modifica
+  nello stesso secondo in cui si è caricato l'elenco non si vede.
+- **Scartare = solo bozze vere**: carte tutte sospese, `reps == 0`, `type == 0`, nessuna riga in `revlog`.
+- **Tag riservati** (`hub::`, `agent::`, `ext::`, ogni variante di maiuscole e spazi): 422 da `POST /notes/tags`
+  e da `PATCH /notes/{id}` della sessione se li cambiano (rimandare quelli già presenti va bene); in `remove`
+  anche i genitori (`hub`, `agent`, `ext`: in Anki togliere il genitore toglie i figli). Ai token con scope
+  il `PATCH` li ignora in silenzio, come la creazione.
+- **«Annulla» dello studio** solo per ciò che ha fatto lo studio: `_StudyUndo` (routers/study.py) ricorda
+  `last_step` di Anki prima/dopo ogni risposta o azione e offre l'undo solo se da allora non è successo
+  altro. Sostituisce l'elenco di etichette da escludere.
+- **`tokens.json` illeggibile** → `tokens.json.bak-<timestamp>` (0600) e warning, mai sovrascritto; campi
+  extra nei token ignorati (downgrade).
+- **Limiti**: `external_id` `^[A-Za-z0-9._:-]{1,200}$` e cercato con LIKE sul tag intero; 200 KB per campo e
+  2 MB per batch (422); `GET /hub/drafts` `limit` ≤ 200.
 
 ## Regole per chi ci lavora
 

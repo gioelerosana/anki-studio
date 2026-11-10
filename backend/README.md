@@ -82,7 +82,7 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | `ANKI_BUSY_TIMEOUT` | `20` | Quanto una richiesta aspetta la collezione occupata prima del 503 |
 | `ANKI_LANG` | `it` | Lingua di Anki per intervalli ("4g") e messaggi |
 | `ANKI_LOG_FORMAT` | `text` (`json` nel container) | Formato dei log |
-| `ANKI_TOKEN_MAX_FAILURES` / `_WINDOW_S` | `20` / `600` | Token o login OIDC sbagliati per IP prima del blocco |
+| `ANKI_TOKEN_MAX_FAILURES` / `_WINDOW_S` | `20` / `600` | Bearer sbagliati (e, a parte, login OIDC falliti) per IP prima del blocco; vedi "Sicurezza" |
 | `ANKI_LOGIN_MAX_FAILURES` / `_WINDOW_S` | `5` / `900` | Login AnkiWeb falliti prima del blocco |
 | `ANKIWEB_USERNAME` / `ANKIWEB_PASSWORD` | — | Login automatico al primo avvio (poi si possono togliere) |
 
@@ -225,16 +225,25 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
   (`Sec-Fetch-Site: same-origin`, o `Origin` uguale a `ANKI_PUBLIC_URL`), altrimenti **403**.
   `SameSite=Lax` da solo non basta: gli altri sottodomini di `jshep.xyz` sono lo stesso "sito".
 - **Token per gli script** (facoltativo): con `ANKI_API_TOKEN` impostato vale anche
-  `Authorization: Bearer <token>`. Dopo `ANKI_TOKEN_MAX_FAILURES` token sbagliati (o login OIDC
-  con `state`/codice non validi) nella finestra, quell'IP riceve **429** con `Retry-After` per
-  tutte le richieste, anche con credenziali giuste (altrimenti chi indovina se ne accorgerebbe).
+  `Authorization: Bearer <token>`. Dopo `ANKI_TOKEN_MAX_FAILURES` Bearer sbagliati nella finestra,
+  quell'IP riceve **429** con `Retry-After` per le richieste **che presentano un Bearer** (REST e
+  `/mcp`), anche con la credenziale giusta (altrimenti chi indovina se ne accorgerebbe). Tre
+  dettagli che evitano di chiudere fuori il proprietario:
+  - il blocco riguarda solo chi manda un `Authorization: Bearer`: la PWA con il cookie di sessione
+    (nessun Bearer) non indovina niente e non si ferma mai;
+  - un Bearer che corrisponde a un token **revocato** risponde 401 ma **non conta** come tentativo:
+    è l'agente di prima che ritenta (in `tokens.json` restano solo gli hash dei revocati, mai il
+    chiaro, al massimo 500). Un token che non è mai esistito conta, quindi indovinare non diventa più
+    facile;
+  - i login OIDC con `state`/codice non validi hanno un contatore a parte (stessa soglia) che ferma
+    solo `/api/auth/callback`.
 - **`/mcp`** (server MCP): non usa cookie e il cookie di sessione **non** vale come credenziale (niente CSRF,
   niente autorità implicita); i token nella query string si ignorano. Vedi "Server MCP" qui sotto.
 - **Login AnkiWeb**: al massimo `ANKI_LOGIN_MAX_FAILURES` falliti nella finestra, per IP e in totale.
 - **Header**: su `/api/*`, `/mcp` e `/.well-known/*` `X-Content-Type-Options`, `Referrer-Policy: no-referrer`,
   `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy`, `Cache-Control: no-store` (i media
   hanno la loro cache), una CSP restrittiva e, sui media, `sandbox`: un `.svg` o `.html` della
-  collezione aperto direttamente non esegue script sulla nostra origine. `Strict-Transport-Security`
+  collezione (per esempio arrivato con la sync) aperto direttamente non esegue script sulla nostra origine. `Strict-Transport-Security`
   se la richiesta arriva in HTTPS.
 - **Log senza segreti**: token, client secret OIDC, chiave di sync e password usate per il login vengono oscurati
   (`***`) in ogni messaggio e traceback; il log di accesso registra solo metodo, path, stato e
@@ -294,7 +303,7 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET | `/api/stats?deck_id=&days=30` | Carte per stato, review per giorno, ritenzione, previsione a 7 giorni |
 | GET | `/api/decks/{id}/study` | Prossima carta del mazzo (`done: true` se hai finito) |
 | POST | `/api/decks/{id}/study/answer` | `{card_id, rating: 1-4, time_taken_ms}`, restituisce già la carta successiva |
-| POST | `/api/decks/{id}/study/undo` | Annulla l'ultima azione (409 se non c'è niente) |
+| POST | `/api/decks/{id}/study/undo` | Annulla l'ultima risposta o azione **dello studio** (409 se non c'è niente: mai le modifiche di agenti, approvazioni o selezioni di mazzo) |
 | GET | `/api/decks/{id}/options` | Preset del mazzo (limiti, passi, FSRS), sola lettura |
 | POST | `/api/decks/{id}/extend-limits` | `{new, review}`: "studia altre N carte oggi", restituisce lo StudyState |
 | POST | `/api/cards/{id}/bury` · `/suspend` | Seppellisci / sospendi (204; con `?deck_id=` → StudyState) |
@@ -306,19 +315,19 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET | `/api/search/notes?q=&limit=&offset=` | Ricerca con la sintassi di Anki (400 se non valida) |
 | GET | `/api/tags` | Tutti i tag |
 | GET | `/api/media/{file}` | Immagini e audio delle carte (con il cookie di sessione) |
-| POST | `/api/media` | `{filename, data_base64}` → `{filename}` (201): carica un'immagine, un audio o un mp4/webm nei media (max 10 MB decodificati, 413 oltre). Estensione e contenuto devono coincidere, il nome si sanifica e Anki può cambiarlo: usa quello restituito nei campi. Token `write` e sessione |
+| POST | `/api/media` | `{filename, data_base64}` → `{filename}` (201): carica un'immagine (png, jpg, gif, webp), un audio o un mp4/webm nei media (max 10 MB decodificati, 413 oltre). **Gli SVG non sono ammessi** (422: possono contenere codice e un filtro non basta, usa PNG/JPG/WebP). Estensione e contenuto devono coincidere, il nome si sanifica e Anki può cambiarlo: usa quello restituito nei campi. Token `write` e sessione |
 | GET | `/api/sync` | Stato della sync (vedi sopra) |
 | POST | `/api/sync/login` · `/logout` | Collega o scollega AnkiWeb (429 dopo troppi tentativi) |
 | POST | `/api/sync` | Sync normale (409 = serve la sync completa) |
 | POST | `/api/sync/full` | `{direction: "upload" \| "download"}`, solo dopo conferma dell'utente |
 | POST | `/api/hub/notes/batch` | Hub: fino a 100 note (`HubBatchIn` → `HubBatchOut`), `dry_run`, `create_missing_decks`, `draft`; ogni nota ha il suo esito |
 | POST | `/api/hub/decks` | `{name}` → crea il mazzo, idempotente (`created: false` se esisteva) |
-| GET | `/api/hub/summary` · `/api/hub/drafts?limit&offset` | Numero di bozze (badge) · elenco delle bozze |
-| POST | `/api/hub/drafts/approve` · `/discard` | `{note_ids}`: approva (carte riattivate) · scarta (cancella, solo se è davvero una bozza) |
+| GET | `/api/hub/summary` · `/api/hub/drafts?limit&offset` | Numero di bozze (badge) · elenco delle bozze (ognuna con `modified`; `limit` al massimo **200**, default 50) |
+| POST | `/api/hub/drafts/approve` · `/discard` | `{note_ids, expected_mod?}`: approva (carte riattivate) · scarta (cancella, solo bozze vere); → `{approved\|discarded, skipped_ids}` |
 | GET | `/api/cards/{id}/preview` | La carta renderizzata fuori dalla coda (`CardPreview`), anche se sospesa |
 | POST | `/api/notes/{id}/move` | `{deck_id}`: sposta tutte le carte della nota |
 | DELETE | `/api/notes/{id}` | Cancella la nota con le sue carte (204) |
-| POST | `/api/notes/tags` | `{note_ids, add, remove}`: tag in blocco → `{updated}` |
+| POST | `/api/notes/tags` | `{note_ids, add, remove}`: tag in blocco → `{updated}`; 422 se toccano `hub::`, `agent::`, `ext::` |
 | GET/POST/PATCH/DELETE | `/api/tokens[/{id}]` | Token per gli agenti: elenco · crea (token in chiaro **solo qui**) · `scope`/`review` · revoca |
 | WS | `/api/remote?role=screen&screen_id=…` · `?role=remote` | Telecomando: lo studio aperto (`screen`) e il telefono (`remote`), vedi sotto |
 
@@ -344,6 +353,9 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
   mostra un campo di testo e, girando la carta, chiede `POST /api/cards/{id}/type-answer`.
 - **Annulla**: `StudyState.undo_label` dice cosa annullerebbe (es. "Rispondi alla carta"), `null`
   se niente. Dopo un cambio di mazzo è `null`: non si annulla una risposta data in un altro mazzo.
+  È `null` anche se l'ultima operazione annullabile non è dello studio (un agente ha aggiornato una
+  nota, si è approvata una bozza...): la pila di undo di Anki è una sola, ma lo studio tiene il conto
+  delle *sue* operazioni (risposta, seppellisci, sospendi, flag) e non annulla mai quelle di altri.
 - **Tempo**: misura sul client quanto ci metti a rispondere e invialo in `time_taken_ms`.
   Il server lo limita al massimo impostato nel preset del mazzo, come fa Anki desktop.
 - Un **409** su `answer` significa che la coda è cambiata, per esempio dopo una sync: basta ricaricare `GET /study`.
@@ -368,7 +380,7 @@ Contratto e motivazioni in [`docs/PIANO-HUB.md`](../docs/PIANO-HUB.md); la logic
 solo l'hash SHA-256: il chiaro si vede una volta sola, nella risposta di `POST /api/tokens`, e non si
 recupera. Ogni token ha `scope` (`read` | `write`), `review` (le sue note nascono bozza) e `last_used_at`.
 Il nome diventa lo slug del tag di provenienza `agent::<slug>` (`a-z0-9-`), quindi è unico e non si
-cambia. I tentativi sbagliati contano nello stesso limite per IP di `ANKI_API_TOKEN` (429).
+cambia. I Bearer sbagliati contano nel limite per IP di `ANKI_API_TOKEN` (429, solo per chi manda un Bearer: vedi "Sicurezza"); uno revocato risponde 401 senza contare. Se `tokens.json` non si legge (JSON rovinato, forma sbagliata) non viene sovrascritto: si rinomina in `tokens.json.bak-<data>` (0600), con un warning senza contenuti, e si riparte senza token; i campi sconosciuti nei token (file di una versione più nuova) si ignorano.
 
 **Chi può cosa** (un solo controllo in `security.token_may`, deny-by-default: una rotta nuova è
 vietata ai token con scope finché non la si elenca lì):
@@ -377,7 +389,7 @@ vietata ai token con scope finché non la si elenca lì):
 |---|---|---|---|
 | `GET` decks, notetypes, search/notes, tags, notes/{id}, cards/{id}/preview, hub/summary, hub/drafts, sync | sì | sì | sì |
 | `POST` hub/notes/batch, hub/decks, sync, media | sì | sì | 403 |
-| `PATCH` notes/{id} | sì | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 |
+| `PATCH` notes/{id} | sì (ma non i tag riservati: 422) | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano; con `review` una nota già approvata torna bozza) | 403 |
 | approva/scarta bozze, move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me`, telecomando | sì | 403 | 403 |
 
 Un token con scope risponde 403 con "Questo token non può fare questa operazione".
@@ -388,10 +400,13 @@ Un token con scope risponde 403 con "Questo token non può fare questa operazion
 mancante senza `create_missing_decks`, primo campo vuoto, cloze mancante...). `dry_run` restituisce
 lo stesso esito che avrebbe la scrittura senza scrivere niente (nemmeno i mazzi). Tutta la batch è
 **una sola voce di undo** (`col.undo()`); lo studio non la propone come "Annulla".
+Tetti: **200 KB per campo** e **2 MB per batch** (UTF-8, campi e tag): oltre, 422 con il motivo e
+non si scrive niente (anche in `dry_run`); stessi tetti ai campi di `PATCH /notes/{id}` da token.
 
-- **Idempotenza**: `external_id` → tag `ext::<id>`. Rimandare la nota la aggiorna (campi passati,
-  tag nuovi: quelli vecchi non si tolgono) o la lascia com'è (`unchanged`); mazzo e stato di bozza
-  non cambiano. Un token vede solo i propri `external_id`. Senza `external_id`, un primo campo uguale
+- **Idempotenza**: `external_id` (1-200 caratteri tra `A-Za-z0-9._:-`, altrimenti 422) → tag
+  `ext::<id>`, cercato con il tag intero (niente jolly, niente figli `ext::x::y`). Rimandare la nota la
+  aggiorna (campi passati, tag nuovi: quelli vecchi non si tolgono) o la lascia com'è (`unchanged`);
+  il mazzo non cambia. Un token vede solo i propri `external_id`. Senza `external_id`, un primo campo uguale
   a una nota dello stesso tipo dà `duplicate` (con `note_id` di quella esistente); con `external_id`
   l'agente dice che è un'altra nota e si crea.
 - **Provenienza**: le note di un token hanno `agent::<slug>`; quelle della sessione o di
@@ -399,8 +414,27 @@ lo stesso esito che avrebbe la scrittura senza scrivere niente (nemmeno i mazzi)
   nei tag diventano `_`.
 - **Bozze**: carte sospese + tag `hub::bozza`, quindi fuori dallo studio. Un token con `review` ha
   sempre bozze (`draft: false` non vale); gli altri scelgono con `draft` (default: note normali).
-  `approve` toglie il tag e riattiva le carte; `discard` cancella **solo** note che hanno `hub::bozza`
-  (le altre restano, anche se l'id è nella richiesta). Solo sessione/amministratore.
+  `approve` toglie il tag e riattiva le carte; `discard` cancella **solo** bozze vere: con `hub::bozza`,
+  carte tutte sospese e **mai ripassate** (`reps == 0`, `type == 0`, nessuna riga in `revlog`): il tag
+  da solo non basta, può averlo messo chiunque da Anki desktop o da un altro dispositivo. Solo
+  sessione/amministratore.
+  - **Non si aggira l'approvazione.** Un token con `review` che modifica una nota già approvata
+    (rimandando lo stesso `external_id`, `PATCH /notes/{id}`, `add_notes`/`update_note` di MCP) la
+    RIMETTE in bozza (tag + carte sospese), purché la modifica cambi davvero qualcosa. Un token senza
+    `review` non cambia lo stato. Dopo ogni modifica di una bozza (token, `PATCH` della sessione,
+    Inbox) si sospendono **tutte** le sue carte non sospese: aggiungere `{{c2::…}}` genera una carta
+    nuova che non deve entrare nello studio.
+  - **Solo ciò che l'utente ha visto.** Ogni bozza ha `modified` (`note.mod`, secondi). La PWA lo
+    rimanda in `expected_mod` (`{id: modified}`): se la nota è cambiata nel frattempo (un agente ha
+    aggiornato la bozza) si SALTA e l'id va in `skipped_ids`, come quelli che non sono più bozze, non
+    esistono o (per `discard`) non sono bozze vere. Senza `expected_mod` si tratta tutto quello che è
+    una bozza. `mod` ha la risoluzione del secondo: una modifica nello stesso secondo in cui l'utente
+    ha caricato l'elenco non si vede.
+  - **Tag riservati** (`hub::…`, `agent::…`, `ext::…`, anche con maiuscole o spazi diversi): non si
+    aggiungono né si tolgono a mano. `POST /notes/tags` e `PATCH /notes/{id}` della sessione rispondono
+    **422** (la PWA nel `PATCH` rimanda quelli che la nota ha già e passa; per le bozze si usano
+    approva e scarta). In `remove` si rifiutano anche i genitori `hub`, `agent`, `ext` (in Anki
+    togliere `hub` toglie anche `hub::bozza`). I token con scope nel `PATCH` li ignorano, come alla creazione.
 - **Anteprima**: `GET /api/cards/{id}/preview` rende la carta come lo studio (stessi media, CSS e
   `card_class`) ma senza coda: serve anche per le carte sospese.
 - **Sync dopo la scrittura**: vedi `ANKI_SYNC_AFTER_WRITE_SECONDS`. Un timer a finestra fissa raggruppa le
@@ -437,7 +471,7 @@ parte `request_soon()` (sync con AnkiWeb dopo `ANKI_SYNC_AFTER_WRITE_SECONDS`). 
 | `create_deck` | Crea un mazzo (idempotente) | `write` |
 | `sync_now` | Sync normale con AnkiWeb | `write` |
 | `sync_status` | Stato della sync | `read` |
-| `add_media` | Immagine, audio o video breve in base64 (`filename`, `data_base64`, max 10 MB decodificati) | `write` |
+| `add_media` | Immagine (png, jpg, gif, webp: **niente SVG**), audio o video breve in base64 (`filename`, `data_base64`, max 10 MB decodificati) | `write` |
 
 **Non esistono** strumenti per cancellare, approvare o scartare bozze, sync completa o tipi di nota:
 sono gesti dell'utente nella PWA. Il testo che arriva dalla collezione (`search_notes`, `get_note`) è
@@ -447,7 +481,7 @@ precedente.
 
 **Permessi.** Ogni strumento corrisponde a una rotta REST e passa da `security.token_may` (una sola
 matrice): un token `read` non scrive niente, `review` non si aggira (`draft: false` non vale),
-`update_note` tocca solo le note col proprio `agent::<nome>`, i tag `agent::`, `ext::`, `hub::` sono
+`update_note` tocca solo le note col proprio `agent::<nome>` (con `review` una nota approvata torna bozza), i tag `agent::`, `ext::`, `hub::` sono
 riservati. Un accesso senza identità (non passato da `/mcp`) è rifiutato. L'elenco degli strumenti è lo
 stesso per tutti: uno strumento non permesso risponde con un errore che spiega cosa serve.
 
@@ -494,7 +528,7 @@ curl -sN localhost:8000/mcp "${H[@]}" -d '{"jsonrpc":"2.0","id":2,"method":"tool
 |---|---|
 | `401` + `invalid_token` | Token sbagliato, revocato, JWT scaduto, `aud`/`iss` diversi, firma non valida o `kid` che il provider non pubblica |
 | `403` "Utente non ammesso" / "nel token mancano…" | `ANKI_OIDC_ALLOWED_USERS/_GROUPS` e claim del JWT (vedi sopra) |
-| `429` | Troppi token sbagliati da quell'IP (stesso limite della REST) |
+| `429` | Troppi Bearer sbagliati da quell'IP (stesso limite della REST, solo per chi manda un Bearer; un token revocato non conta) |
 | `503` Authentik non raggiungibile | Discovery o JWKS non scaricabili e nessuna cache |
 | `421` / `403` Invalid Host / Origin | Host o `Origin` fuori da `ANKI_PUBLIC_URL`: controlla che Traefik non riscriva l'host |
 | `413` | Body oltre 15 MB (50 MB per il resto del backend) |
@@ -541,8 +575,11 @@ chiavi RSA/EC generata nei test e un JWKS finto (valido, scaduto, `iss`/`aud` sb
 `alg=none`, HS256 firmato con la chiave pubblica, rotazione dei `kid`, claim e utenti ammessi), rate limit,
 cookie che non valgono, Host ammessi, niente redirect; `tests/test_media.py` i media. Nessun test fa rete.
 
-`tests/test_hub.py` copre batch, idempotenza, bozze, anteprima, spostamenti e tag; `test_tokens.py` i token
-(hash a riposo, rate limit, revoca); `test_permissions.py` la matrice dei permessi; `test_sync_after_write.py`
+`tests/test_hub.py` copre batch, idempotenza, bozze, anteprima, spostamenti e tag; `test_hub_review.py` la revisione
+(bozze rimesse in bozza, carte nuove sospese, `expected_mod`/`skipped_ids`, tag riservati, tetti); `test_tokens.py` i token
+(hash a riposo, rate limit e blocco, revoca, file illeggibile); `test_permissions.py` la matrice dei permessi;
+`test_route_matrix.py` classifica ogni rotta `/api/*` (una rotta nuova non elencata fa fallire il test);
+`test_study_undo.py` l'«Annulla» dello studio; `test_busy.py` i 503 con la collezione occupata; `test_sync_after_write.py`
 il debounce della sync dopo la scrittura.
 
 `tests/test_sync_e2e.py` avvia per ogni test un sync server locale (`python -m anki.syncserver`,
