@@ -175,6 +175,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.token_limiter = RateLimiter(
         settings.anki_token_max_failures, settings.anki_token_window_s
     )
+    # i Bearer sbagliati hanno un limite a parte (vale solo per le richieste con un Bearer);
+    # `token_limiter` resta per i fallimenti del login OIDC
+    app.state.bearer_limiter = RateLimiter(
+        settings.anki_token_max_failures, settings.anki_token_window_s
+    )
     app.state.login_limiter = RateLimiter(
         settings.anki_login_max_failures, settings.anki_login_window_s
     )

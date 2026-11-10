@@ -163,8 +163,9 @@ def _bearer(request: HTTPConnection) -> str | None:
 
 
 def check_blocked(request: HTTPConnection) -> None:
+    """Limite ai fallimenti del login OIDC (callback con state sbagliato): `token_limiter`.
+    Non riguarda i Bearer, che hanno il loro (`check_bearer_blocked`)."""
     limiter: RateLimiter = request.app.state.token_limiter
-    # bloccato anche con credenziali giuste: altrimenti chi indovina se ne accorgerebbe
     retry = limiter.retry_after(client_key(request))
     if retry:
         raise _too_many(retry, "con credenziali sbagliate")
@@ -174,6 +175,35 @@ def record_auth_failure(request: HTTPConnection, what: str) -> None:
     key = client_key(request)
     request.app.state.token_limiter.hit(key)
     log.warning("%s non valido", what, extra={"client": key, "path": request.url.path})
+
+
+def check_bearer_blocked(request: HTTPConnection) -> None:
+    """Blocco per troppi Bearer sbagliati, SOLO per le richieste che presentano un Bearer.
+
+    Il limite difende dall'indovinare un token, quindi vale per chi prova un token: bloccato
+    anche con la credenziale giusta (altrimenti chi indovina se ne accorgerebbe). Chi non manda
+    un Bearer, cioè la PWA con il cookie di sessione, non indovina niente e non si ferma: un
+    agente che ritenta in loop da un IP non deve chiudere fuori il proprietario."""
+    if _bearer(request) is None:
+        return
+    retry = request.app.state.bearer_limiter.retry_after(client_key(request))
+    if retry:
+        raise _too_many(retry, "con credenziali sbagliate")
+
+
+def record_bearer_failure(request: HTTPConnection, what: str) -> None:
+    key = client_key(request)
+    request.app.state.bearer_limiter.hit(key)
+    log.warning("%s non valido", what, extra={"client": key, "path": request.url.path})
+
+
+def is_revoked_bearer(request: HTTPConnection, token: str) -> bool:
+    """Un token `ask_…` che esisteva ed è stato revocato: risponde 401 ma NON conta come un
+    tentativo di indovinare (è un agente configurato col token vecchio che ritenta)."""
+    if not token.startswith(TOKEN_PREFIX):
+        return False
+    store: TokenStore = request.app.state.tokens
+    return store.is_revoked(token)
 
 
 def _unauthorized() -> HTTPException:
@@ -306,11 +336,13 @@ def _identify_bearer(request: HTTPConnection, token: str, settings: Settings) ->
     identity = match_bearer(request, token, settings)
     if identity is not None:
         return identity
+    if is_revoked_bearer(request, token):
+        return None
     if not token.startswith(TOKEN_PREFIX) and settings.anki_api_token is None:
         # nessun ANKI_API_TOKEN da indovinare: è la PWA di prima (in cache) con il token
         # vecchio, che non deve far bloccare l'IP proprio mentre passa al login con Authentik
         return None
-    record_auth_failure(request, "Token")
+    record_bearer_failure(request, "Token")
     return None
 
 
@@ -320,7 +352,7 @@ def require_auth(request: Request, settings: Settings = Depends(get_settings)) -
     Vale anche per i media: <img> e <audio> delle carte mandano il cookie da sé.
     Qui si applica anche, in un solo punto, la matrice dei permessi dei token con scope.
     """
-    check_blocked(request)
+    check_bearer_blocked(request)
     token = _bearer(request)
     if token is not None:
         identity = _identify_bearer(request, token, settings)
@@ -361,7 +393,7 @@ def websocket_session(websocket: HTTPConnection, settings: Settings) -> Identity
     I token con scope non pilotano lo studio: restano fuori dal telecomando.
     """
     try:
-        check_blocked(websocket)
+        check_bearer_blocked(websocket)
     except HTTPException:
         return None
     token = _bearer(websocket)

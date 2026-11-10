@@ -3,8 +3,8 @@
 Due modi, in un solo posto:
 
 1. **Bearer `ask_…`** (token degli agenti) e il vecchio `ANKI_API_TOKEN`: gli stessi di `/api`,
-   con gli stessi scope e lo stesso limite ai tentativi sbagliati (`check_blocked`,
-   `record_auth_failure`).
+   con gli stessi scope e lo stesso limite ai tentativi sbagliati (`check_bearer_blocked`,
+   `record_bearer_failure`).
 2. **OAuth con Authentik** per l'app Claude: un JWT firmato da un SECONDO provider Authentik.
    Qui sì si verifica la firma (a differenza dell'ID token del login della PWA, che arriva
    direttamente dal token endpoint): il token arriva da un client esterno, quindi vale solo
@@ -45,7 +45,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
 from .oidc import OIDCError, authorize_claims
-from .security import Identity, _bearer, check_blocked, match_bearer, record_auth_failure
+from .security import (
+    Identity,
+    _bearer,
+    check_bearer_blocked,
+    is_revoked_bearer,
+    match_bearer,
+    record_bearer_failure,
+)
 from .tokens import TOKEN_PREFIX
 
 log = logging.getLogger(__name__)
@@ -334,7 +341,7 @@ class McpAuth:
 
     async def _authenticate(self, request: Request) -> Identity | Response:
         try:
-            check_blocked(request)
+            check_bearer_blocked(request)
         except HTTPException as e:
             return JSONResponse({"detail": e.detail}, status_code=e.status_code, headers=e.headers)
         token = _bearer(request)
@@ -360,8 +367,10 @@ class McpAuth:
             else:
                 return self.verifier.identity(claims)
         if identity is None:
-            # token statico sbagliato o JWT non valido: un tentativo sbagliato per il rate limit
-            record_auth_failure(request, "Token di /mcp")
+            # un token revocato è 401 ma non un tentativo di indovinare (l'agente ritenta)
+            if not is_revoked_bearer(request, token):
+                # token statico sbagliato o JWT non valido: un tentativo sbagliato per il rate limit
+                record_bearer_failure(request, "Token di /mcp")
             return self._reject(401, "Token non valido", invalid=True)
         return identity
 

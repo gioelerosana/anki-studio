@@ -22,7 +22,7 @@ import secrets
 import threading
 import time
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Literal
 
@@ -34,6 +34,9 @@ TOKEN_PREFIX = "ask_"
 # `last_used_at` si tiene in memoria a ogni uso, ma su disco si riscrive al massimo così
 # spesso: un agente che fa cento richieste non deve riscrivere il file cento volte
 _PERSIST_EVERY_S = 60
+# gli hash dei token revocati (tombstone) servono solo a riconoscere un agente che ritenta
+# con un token revocato: ne bastano pochi, i più vecchi si dimenticano
+_MAX_REVOKED = 500
 
 Scope = Literal["read", "write"]
 
@@ -75,6 +78,9 @@ class TokenStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
+        # se un file illeggibile non si riesce a spostare, non lo si sovrascrive mai
+        self._save_blocked = False
+        self._revoked: list[str] = []
         self._tokens: list[StoredToken] = self._load()
         self._persisted_at: dict[str, float] = {}
 
@@ -83,21 +89,43 @@ class TokenStore:
     def _load(self) -> list[StoredToken]:
         try:
             raw = json.loads(self.path.read_text())
-            return [StoredToken(**t) for t in raw["tokens"]]
+            known = {f.name for f in fields(StoredToken)}
+            # un campo in più (file scritto da una versione più nuova, poi downgrade) si ignora:
+            # non deve azzerare i token
+            tokens = [StoredToken(**{k: v for k, v in t.items() if k in known}) for t in raw["tokens"]]
+            revoked = raw.get("revoked", [])
+            if not isinstance(revoked, list) or not all(isinstance(h, str) for h in revoked):
+                raise ValueError("revoked non è un elenco di hash")
+            self._revoked = revoked[-_MAX_REVOKED:]
+            return tokens
         except FileNotFoundError:
             return []
-        except (ValueError, TypeError, KeyError):
-            # niente cancellazioni: il file resta com'è, ma senza token validi nessuno entra
-            log.warning("tokens.json non valido, ignorato")
+        except (ValueError, TypeError, KeyError, AttributeError, OSError):
+            self._set_aside()
             return []
 
+    def _set_aside(self) -> None:
+        """Il file non si legge: lo si mette da parte invece di lasciarlo sovrascrivere dal
+        primo `create`. Il nome del backup ha il timestamp; niente contenuti nel log (sono hash)."""
+        backup = self.path.with_name(f"{self.path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        try:
+            os.replace(self.path, backup)
+            os.chmod(backup, 0o600)
+        except OSError:
+            log.error("tokens.json non leggibile e non spostabile: non lo scrivo")
+            self._save_blocked = True
+        else:
+            log.warning("tokens.json non leggibile: salvato come %s, riparto senza token", backup.name)
+
     def _save(self) -> None:
+        if self._save_blocked:
+            raise OSError("tokens.json non leggibile: non lo sovrascrivo")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         # 0600 fin dalla creazione, come sync_auth.json
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"tokens": [asdict(t) for t in self._tokens]}, f)
+            json.dump({"tokens": [asdict(t) for t in self._tokens], "revoked": self._revoked}, f)
         tmp.replace(self.path)
 
     # ---- gestione ----------------------------------------------------------
@@ -150,10 +178,12 @@ class TokenStore:
 
     def revoke(self, token_id: str) -> bool:
         with self._lock:
-            kept = [t for t in self._tokens if t.id != token_id]
-            if len(kept) == len(self._tokens):
+            gone = next((t for t in self._tokens if t.id == token_id), None)
+            if gone is None:
                 return False
-            self._tokens = kept
+            self._tokens = [t for t in self._tokens if t.id != token_id]
+            # tombstone: l'hash (mai il chiaro) basta a riconoscere il token revocato
+            self._revoked = [*self._revoked, gone.hash][-_MAX_REVOKED:]
             self._save()
         log.info("Token revocato", extra={"token_id": token_id})
         return True
@@ -172,6 +202,13 @@ class TokenStore:
             if found is not None:
                 self._touch(found)
         return found
+
+    def is_revoked(self, plain: str) -> bool:
+        """Vero se `plain` è un token che esisteva ed è stato revocato: chi lo manda è l'agente
+        di prima, non qualcuno che indovina, e non deve far scattare il limite ai tentativi."""
+        digest = hash_token(plain)
+        with self._lock:
+            return any(hmac.compare_digest(h, digest) for h in self._revoked)
 
     def _touch(self, token: StoredToken) -> None:
         now = time.time()
