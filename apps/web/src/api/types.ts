@@ -62,6 +62,52 @@ export interface TypedAnswer {
 
 export type Rating = 1 | 2 | 3 | 4;
 
+/* ---- telecomando (backend/app/remote.py, WebSocket /api/remote) ---- */
+
+/**
+ * Cosa mostra lo schermo (la PWA sul computer): il telefono lo usa per disegnare i pulsanti.
+ * `view`: `decks` = elenco dei mazzi (il telefono ne apre uno), `study` = studio (tutti gli
+ * altri campi), `other` = un'altra schermata, che il telefono non cambia.
+ */
+export interface RemoteScreenState {
+  view: 'decks' | 'study' | 'other';
+  deck_id: number | null;
+  deck_name: string;
+  done: boolean;
+  card_id: number | null;
+  revealed: boolean;
+  queue: StudyCard['queue'] | null;
+  counts: Counts | null;
+  /** Come StudyCard.button_labels: [Di nuovo, Difficile, Bene, Facile]. */
+  button_labels: string[];
+  has_audio: boolean;
+  /** La pagina non ha ancora ricevuto un clic: il browser blocca audio e voce. */
+  audio_blocked: boolean;
+  /** Flag della carta mostrata, 0 = nessuno. */
+  flag: number;
+  can_undo: boolean;
+  /** Una risposta è in viaggio verso il backend. */
+  busy: boolean;
+}
+
+/** Un tasto premuto sul telefono. `card_id`: lo schermo lo esegue solo se la carta è ancora quella. */
+export interface RemoteCommand {
+  action: 'reveal' | 'answer' | 'undo' | 'replay' | 'bury' | 'suspend' | 'flag' | 'open_deck' | 'close';
+  rating?: Rating | null;
+  /** Solo per `flag`: 1–7, 0 = togli (lo stesso flag di nuovo lo toglie). */
+  flag?: number | null;
+  card_id?: number | null;
+  /** Solo per `open_deck`: il mazzo da aprire sullo schermo (`close` torna ai mazzi). */
+  deck_id?: number | null;
+}
+
+/** Dal server: `state` al telefono, `command` e `remotes` alla schermata di studio. */
+export type RemoteServerMessage =
+  | { type: 'state'; screen: RemoteScreenState | null }
+  | { type: 'command'; command: RemoteCommand }
+  | { type: 'remotes'; count: number }
+  | { type: 'pong' };
+
 export interface NotetypeField {
   name: string;
   ord: number;

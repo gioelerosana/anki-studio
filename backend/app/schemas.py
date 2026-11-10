@@ -73,6 +73,53 @@ class FlagIn(BaseModel):
     flag: int = Field(ge=0, le=7)
 
 
+# ---- telecomando (app/remote.py) ---------------------------------------------
+
+
+class RemoteScreenState(BaseModel):
+    """Cosa mostra lo schermo (la PWA aperta sul computer): il telefono lo usa per
+    disegnare i pulsanti. Niente contenuto della carta: il telefono è solo un telecomando.
+
+    `view`: `decks` = elenco dei mazzi (il telefono può sceglierne uno), `study` = studio
+    (tutti gli altri campi), `other` = un'altra schermata (aggiungi, impostazioni: il
+    telefono non la cambia, si perderebbe quello che si sta scrivendo)."""
+
+    view: Literal["decks", "study", "other"] = "study"
+    deck_id: int | None = None
+    deck_name: str = Field(default="", max_length=1000)
+    done: bool = False
+    card_id: int | None = None
+    revealed: bool = False
+    queue: Literal["new", "learning", "review"] | None = None
+    counts: Counts | None = None
+    # come StudyCard.button_labels: [Di nuovo, Difficile, Bene, Facile]
+    button_labels: list[str] = Field(default_factory=list, max_length=4)
+    has_audio: bool = False
+    # la pagina non ha ancora ricevuto un clic: il browser blocca audio e voce, e il
+    # telefono chiede di fare un clic sul computer
+    audio_blocked: bool = False
+    # flag della carta mostrata (0 = nessuno), per il menu del telefono
+    flag: int = Field(default=0, ge=0, le=7)
+    can_undo: bool = False
+    # una risposta è in viaggio verso il backend: i pulsanti vanno disattivati
+    busy: bool = False
+
+
+class RemoteCommand(BaseModel):
+    """Un tasto premuto sul telefono. `card_id` evita che un doppio tocco valuti la
+    carta successiva: lo schermo esegue il comando solo se la carta è ancora quella."""
+
+    action: Literal[
+        "reveal", "answer", "undo", "replay", "bury", "suspend", "flag", "open_deck", "close"
+    ]
+    rating: Literal[1, 2, 3, 4] | None = None
+    # solo per "flag": 1–7, 0 = togli (lo stesso flag di nuovo lo toglie, come sul computer)
+    flag: int | None = Field(default=None, ge=0, le=7)
+    card_id: int | None = None
+    # solo per "open_deck": il mazzo da aprire sullo schermo ("close" torna ai mazzi)
+    deck_id: int | None = None
+
+
 class NotetypeField(BaseModel):
     name: str
     ord: int

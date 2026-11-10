@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -70,6 +70,20 @@ function devServiceWorkerReset(): Plugin {
 const appVersion: string =
   process.env.APP_VERSION || JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')).version;
 
+const apiTarget = process.env.API_URL ?? 'http://127.0.0.1:8000';
+const apiProxy: ProxyOptions = {
+  target: apiTarget,
+  changeOrigin: true,
+  ws: true,
+  // Il backend accetta un WebSocket solo dalla propria origine (anti-CSRF, app/security.py).
+  // Dietro questo proxy l'origine della pagina (Vite, o tailscale serve in https) non è
+  // quella dell'API, e non tutti i browser mandano Sec-Fetch-Site sui WebSocket. Solo in
+  // sviluppo il proxy toglie l'Origin: senza, il backend tratta la richiesta come non-browser.
+  configure: (proxy) => {
+    proxy.on('proxyReqWs', (proxyReq) => proxyReq.removeHeader('origin'));
+  },
+};
+
 export default defineConfig({
   base: '/',
   define: {
@@ -95,16 +109,13 @@ export default defineConfig({
     allowedHosts: ['.ts.net'],
     // In sviluppo l'API gira a parte (pnpm dev:api): stessa origine grazie al proxy,
     // come in produzione, dove la PWA la serve lo stesso processo dell'API.
-    proxy: {
-      '/api': { target: process.env.API_URL ?? 'http://127.0.0.1:8000', changeOrigin: true },
-    },
+    // ws: il telecomando è un WebSocket su /api/remote.
+    proxy: { '/api': apiProxy },
   },
   preview: {
     port: 4173,
     host: true,
     allowedHosts: ['.ts.net'],
-    proxy: {
-      '/api': { target: process.env.API_URL ?? 'http://127.0.0.1:8000', changeOrigin: true },
-    },
+    proxy: { '/api': apiProxy },
   },
 });
