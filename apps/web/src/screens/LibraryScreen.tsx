@@ -13,12 +13,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, ChevronLeft, FolderInput, Inbox, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
-import { Badge, Button, Checkbox, EmptyHint, HeaderBar, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
+import { Badge, Banner, Button, Checkbox, EmptyHint, HeaderBar, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, NoteSearchItem } from '../api/types';
 import { formatRelative, plural } from '../app/format';
 import { navigate } from '../app/route';
+import { isReservedTag } from '../notes/tags';
 import { plainTitle, searchTerm } from '../app/text';
 import { useToast } from '../app/toasts';
 import { runEach } from '../hub/bulk';
@@ -60,7 +61,7 @@ const isDraft = (item: NoteSearchItem) => item.tags.some((t) => t.toLowerCase() 
 const agentOf = (item: NoteSearchItem) => item.tags.find((t) => t.toLowerCase().startsWith(AGENT_PREFIX))?.slice(AGENT_PREFIX.length) ?? null;
 
 /** Tag di sistema dell'hub: non servono come filtro per tag (gli agenti hanno il loro menu). */
-const isSystemTag = (t: string) => /^(agent|ext|hub)::/i.test(t);
+const isSystemTag = isReservedTag;
 
 export function LibraryScreen() {
   const toast = useToast();
@@ -83,7 +84,7 @@ export function LibraryScreen() {
   const [allTags, setAllTags] = useState<string[]>([]);
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const { active, select, reset, onDirtyChange, guard } = useActiveNote();
+  const { active, select, reset, onDirtyChange, dirty, guard } = useActiveNote();
 
   type Action = 'move' | 'tags' | 'delete';
   const [action, setAction] = useState<{ kind: Action; ids: number[] } | null>(null);
@@ -163,8 +164,16 @@ export function LibraryScreen() {
     }
   }
 
-  const activeItem = useMemo(() => items.find((n) => n.id === active) ?? null, [items, active]);
-  // la nota aperta non c'è più nell'elenco (cancellata, o filtrata fuori): si chiude il dettaglio
+  /*
+   * La nota aperta. Se esce dai risultati (nuova ricerca, filtro, spostata) ma l'editor ha
+   * modifiche non salvate, resta aperta com'era e un avviso lo dice: chiuderla le butterebbe in
+   * silenzio. Senza modifiche si chiude da sola, come prima. `lastActive` è l'ultima copia vista.
+   */
+  const lastActive = useRef<NoteSearchItem | null>(null);
+  const found = useMemo(() => items.find((n) => n.id === active) ?? null, [items, active]);
+  if (found) lastActive.current = found;
+  const activeItem = found ?? (dirty && active !== null && lastActive.current?.id === active ? lastActive.current : null);
+  const detached = active !== null && found === null && activeItem !== null;
   useEffect(() => {
     if (active !== null && !loading && !activeItem) reset();
   }, [active, activeItem, loading, reset]);
@@ -205,6 +214,8 @@ export function LibraryScreen() {
     setProgress(null);
     // anche con errori parziali l'elenco va riallineato: qualcosa può essere già cambiato
     if (result.done > 0) toast('success', success(result.done));
+    // cancellata la nota aperta (scelta esplicita, con conferma): il dettaglio si chiude anche se era modificato
+    if (action.kind === 'delete' && active !== null && action.ids.includes(active) && result.failed === 0) reset();
     await refresh(items.length);
     if (result.failed > 0) {
       setActionError(result.error ?? new Error('Operazione non riuscita'));
@@ -280,7 +291,16 @@ export function LibraryScreen() {
         toast('success', 'Nota salvata');
         void refresh(items.length);
       }}
-      header={<ItemHeader item={activeItem} />}
+      header={
+        <>
+          {detached ? (
+            <Banner variant="warning">
+              Questa nota non è più tra i risultati della ricerca. Le tue modifiche non sono salvate: salvale, oppure chiudi per scartarle.
+            </Banner>
+          ) : null}
+          <ItemHeader item={activeItem} />
+        </>
+      }
       actions={
         <div className="flex flex-wrap items-center gap-2 border-t pt-4">
           <Button variant="outline" icon={<FolderInput />} onClick={() => openAction('move', [activeItem.id])} className="coarse:h-10">

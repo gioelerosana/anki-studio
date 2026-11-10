@@ -6,7 +6,7 @@
  * stanno nello schermo, e chi controlla una bozza vuole prima vedere la carta com'è.
  * Il salvataggio ricarica l'anteprima e avvisa il chiamante, che aggiorna l'elenco.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Button, SegmentedControl } from '@anki-studio/ui-kit';
 import type { Note } from '../api/types';
 import { NoteFields, TagsInput } from '../notes/NoteFields';
@@ -29,6 +29,7 @@ export function NoteInspector({
   saveIsPrimary = true,
   onSaved,
   onDirtyChange,
+  saveHandle,
 }: {
   noteId: number;
   cardIds: number[];
@@ -40,6 +41,12 @@ export function NoteInspector({
   saveIsPrimary?: boolean;
   onSaved: (note: Note) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Il chiamante può far salvare l'editor da fuori (inbox: «Salva e approva»). Vale `null` se la
+   * nota non è ancora caricata o non c'è nulla da salvare; risponde con la nota salvata o `null`
+   * se il salvataggio è fallito (l'errore resta visibile nell'editor).
+   */
+  saveHandle?: MutableRefObject<(() => Promise<Note | null>) | null>;
 }) {
   const editor = useNoteEditor(noteId);
   const [tab, setTab] = useState<Tab>('preview');
@@ -54,13 +61,26 @@ export function NoteInspector({
 
   const cardId = cardIds[Math.min(cardIndex, cardIds.length - 1)];
 
-  async function save() {
+  async function save(): Promise<Note | null> {
     const saved = await editor.save();
-    if (!saved) return;
+    if (!saved) {
+      // chi salva da fuori non vede il form: porta l'utente dove c'è l'errore
+      setTab('edit');
+      return null;
+    }
     setReloadKey((k) => k + 1);
     setTab('preview');
     onSaved(saved);
+    return saved;
   }
+
+  useEffect(() => {
+    if (!saveHandle) return;
+    saveHandle.current = editor.note && editor.canSave ? save : null;
+    return () => {
+      saveHandle.current = null;
+    };
+  });
 
   return (
     <div className="flex flex-col gap-4">

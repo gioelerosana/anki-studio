@@ -10,31 +10,41 @@ export function useActiveNote(): {
   active: number | null;
   /** Apre (o chiude, con `null`) il dettaglio; con modifiche non salvate chiede conferma. */
   select: (id: number | null) => void;
-  /** Come `select` ma senza conferma: la nota non esiste più. */
+  /**
+   * Come `select(null)` ma senza conferma: per quando le modifiche non servono più
+   * (nota cancellata, o scelta esplicita di buttarle). Mai per «sparita dall'elenco»
+   * con modifiche in corso: lì la nota resta aperta (vedi `dirty`).
+   */
   reset: () => void;
   /** Da passare a `NoteInspector`. Stabile. */
   onDirtyChange: (dirty: boolean) => void;
+  /** La nota aperta ha modifiche non salvate. Reattivo: chi tiene la nota aperta anche se sparisce dall'elenco lo legge da qui. */
+  dirty: boolean;
   guard: ReactNode;
 } {
   const [active, setActive] = useState<number | null>(null);
   const [pending, setPending] = useState<{ id: number | null } | null>(null);
-  const dirty = useRef(false);
+  // ref per `select` (deve vedere il valore subito), state per chi deve reagire (vedi `dirty` sopra)
+  const dirtyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
 
   const onDirtyChange = useCallback((value: boolean) => {
-    dirty.current = value;
+    dirtyRef.current = value;
+    setDirty(value);
   }, []);
 
   const select = useCallback(
     (id: number | null) => {
       if (id === active) return;
-      if (dirty.current) setPending({ id });
+      if (dirtyRef.current) setPending({ id });
       else setActive(id);
     },
     [active],
   );
 
   const reset = useCallback(() => {
-    dirty.current = false;
+    dirtyRef.current = false;
+    setDirty(false);
     setActive(null);
   }, []);
 
@@ -46,12 +56,13 @@ export function useActiveNote(): {
       confirmLabel="Scarta le modifiche"
       onClose={() => setPending(null)}
       onConfirm={() => {
-        dirty.current = false;
+        dirtyRef.current = false;
+        setDirty(false);
         setActive(pending?.id ?? null);
         setPending(null);
       }}
     />
   );
 
-  return { active, select, reset, onDirtyChange, guard };
+  return { active, select, reset, onDirtyChange, dirty, guard };
 }
