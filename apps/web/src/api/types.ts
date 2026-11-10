@@ -62,6 +62,39 @@ export interface TypedAnswer {
 
 export type Rating = 1 | 2 | 3 | 4;
 
+/* ---- telecomando (backend/app/remote.py, WebSocket /api/remote) ---- */
+
+/** Cosa mostra la schermata di studio: il telefono lo usa per disegnare i pulsanti. */
+export interface RemoteScreenState {
+  deck_id: number;
+  deck_name: string;
+  done: boolean;
+  card_id: number | null;
+  revealed: boolean;
+  queue: StudyCard['queue'] | null;
+  counts: Counts;
+  /** Come StudyCard.button_labels: [Di nuovo, Difficile, Bene, Facile]. */
+  button_labels: string[];
+  has_audio: boolean;
+  can_undo: boolean;
+  /** Una risposta è in viaggio verso il backend. */
+  busy: boolean;
+}
+
+/** Un tasto premuto sul telefono. `card_id`: lo schermo lo esegue solo se la carta è ancora quella. */
+export interface RemoteCommand {
+  action: 'reveal' | 'answer' | 'undo' | 'replay';
+  rating?: Rating | null;
+  card_id?: number | null;
+}
+
+/** Dal server: `state` al telefono, `command` e `remotes` alla schermata di studio. */
+export type RemoteServerMessage =
+  | { type: 'state'; screen: RemoteScreenState | null }
+  | { type: 'command'; command: RemoteCommand }
+  | { type: 'remotes'; count: number }
+  | { type: 'pong' };
+
 export interface NotetypeField {
   name: string;
   ord: number;

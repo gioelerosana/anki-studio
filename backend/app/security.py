@@ -14,6 +14,7 @@ import time
 from collections import deque
 
 from fastapi import Depends, HTTPException, Request, status
+from starlette.requests import HTTPConnection
 
 from .config import Settings, get_settings
 
@@ -67,7 +68,7 @@ class RateLimiter:
             self._events.pop(key, None)
 
 
-def client_key(request: Request) -> str:
+def client_key(request: HTTPConnection) -> str:
     # dietro Traefik l'IP vero arriva da X-Forwarded-For, che uvicorn
     # applica solo se il proxy è fidato (FORWARDED_ALLOW_IPS, vedi Dockerfile)
     return request.client.host if request.client else "unknown"
@@ -144,19 +145,19 @@ def cookie_secure(request: Request) -> bool:
     )
 
 
-def read_session(request: Request) -> dict | None:
+def read_session(request: HTTPConnection) -> dict | None:
     signer: Signer = request.app.state.signer
     return signer.loads("session", request.cookies.get(SESSION_COOKIE))
 
 
-def _bearer(request: Request) -> str | None:
+def _bearer(request: HTTPConnection) -> str | None:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip() or None
     return None
 
 
-def check_blocked(request: Request) -> None:
+def check_blocked(request: HTTPConnection) -> None:
     limiter: RateLimiter = request.app.state.token_limiter
     # bloccato anche con credenziali giuste: altrimenti chi indovina se ne accorgerebbe
     retry = limiter.retry_after(client_key(request))
@@ -164,7 +165,7 @@ def check_blocked(request: Request) -> None:
         raise _too_many(retry, "con credenziali sbagliate")
 
 
-def record_auth_failure(request: Request, what: str) -> None:
+def record_auth_failure(request: HTTPConnection, what: str) -> None:
     key = client_key(request)
     request.app.state.token_limiter.hit(key)
     log.warning("%s non valido", what, extra={"client": key, "path": request.url.path})
@@ -174,7 +175,7 @@ def _unauthorized() -> HTTPException:
     return HTTPException(status.HTTP_401_UNAUTHORIZED, "Accesso richiesto")
 
 
-def _same_origin(request: Request, settings: Settings) -> bool:
+def _same_origin(request: HTTPConnection, settings: Settings) -> bool:
     """Contro il CSRF sulle richieste che modificano dati con il cookie di sessione.
 
     SameSite=Lax ferma gli altri siti, non gli altri sottodomini di jshep.xyz (stesso
@@ -188,7 +189,9 @@ def _same_origin(request: Request, settings: Settings) -> bool:
     origin = request.headers.get("origin")
     if origin is None:
         return True
-    expected = settings.public_origin or f"{request.url.scheme}://{request.url.netloc}"
+    # un WebSocket arriva come ws/wss, ma il browser manda l'Origin della pagina (http/https)
+    scheme = {"ws": "http", "wss": "https"}.get(request.url.scheme, request.url.scheme)
+    expected = settings.public_origin or f"{scheme}://{request.url.netloc}"
     return origin == expected
 
 
@@ -221,6 +224,38 @@ def require_auth(request: Request, settings: Settings = Depends(get_settings)) -
             extra={"client": client_key(request), "path": request.url.path},
         )
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta da un'altra origine")
+    return session
+
+
+def websocket_session(websocket: HTTPConnection, settings: Settings) -> dict | None:
+    """Come require_auth, per i WebSocket (il telecomando): la sessione o None.
+
+    Il controllo dell'origine vale anche qui, con qualunque metodo: un WebSocket non è
+    soggetto a CORS, e senza questo controllo un'altra pagina di jshep.xyz aperta nello
+    stesso browser potrebbe pilotare lo studio con il cookie dell'utente.
+    """
+    try:
+        check_blocked(websocket)
+    except HTTPException:
+        return None
+    token = _bearer(websocket)
+    if token is not None:
+        expected = settings.anki_api_token
+        if expected is None:
+            return None
+        if not secrets.compare_digest(token, expected):
+            record_auth_failure(websocket, "Token")
+            return None
+        return {"sub": "api-token", "name": "Token dell'API"}
+    session = read_session(websocket)
+    if session is None:
+        return None
+    if not _same_origin(websocket, settings):
+        log.warning(
+            "WebSocket da un'altra origine rifiutato",
+            extra={"client": client_key(websocket), "path": websocket.url.path},
+        )
+        return None
     return session
 
 

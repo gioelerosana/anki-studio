@@ -303,6 +303,7 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | POST | `/api/sync/login` · `/logout` | Collega o scollega AnkiWeb (429 dopo troppi tentativi) |
 | POST | `/api/sync` | Sync normale (409 = serve la sync completa) |
 | POST | `/api/sync/full` | `{direction: "upload" \| "download"}`, solo dopo conferma dell'utente |
+| WS | `/api/remote?role=screen&screen_id=…` · `?role=remote` | Telecomando: lo studio aperto (`screen`) e il telefono (`remote`), vedi sotto |
 
 Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **403** modifica da un'altra origine, **429** troppi tentativi (`Retry-After`),
 **503** collezione occupata da una sync (`Retry-After`), **502** AnkiWeb non raggiungibile.
@@ -329,6 +330,14 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
 - **Tempo**: misura sul client quanto ci metti a rispondere e invialo in `time_taken_ms`.
   Il server lo limita al massimo impostato nel preset del mazzo, come fa Anki desktop.
 - Un **409** su `answer` significa che la coda è cambiata, per esempio dopo una sync: basta ricaricare `GET /study`.
+- **Telecomando** (`app/remote.py`): WebSocket con il cookie di sessione e l'origine della PWA
+  (un'altra origine viene rifiutata all'handshake). La schermata di studio si collega come
+  `screen` e manda `{"type":"state","state":RemoteScreenState,"claim":bool}`; il telefono come
+  `remote` riceve `{"type":"state","screen":…|null}` e manda `{"type":"command","command":RemoteCommand}`
+  (`reveal`, `answer` con `rating`, `undo`, `replay`). Il server inoltra soltanto, in memoria: lo
+  studio vero resta nella schermata, che esegue il comando solo se `card_id` è ancora la carta
+  mostrata. Con più schermate aperte comanda quella in primo piano per ultima (`claim`).
+  Niente abbinamento: stesso account, stessa collezione.
 
 ## Dipendenze
 

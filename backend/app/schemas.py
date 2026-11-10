@@ -73,6 +73,37 @@ class FlagIn(BaseModel):
     flag: int = Field(ge=0, le=7)
 
 
+# ---- telecomando (app/remote.py) ---------------------------------------------
+
+
+class RemoteScreenState(BaseModel):
+    """Cosa mostra lo schermo che studia: il telefono lo usa per disegnare i pulsanti.
+    Niente contenuto della carta: il telefono è solo un telecomando."""
+
+    deck_id: int
+    deck_name: str = Field(default="", max_length=1000)
+    done: bool
+    card_id: int | None = None
+    revealed: bool = False
+    queue: Literal["new", "learning", "review"] | None = None
+    counts: Counts
+    # come StudyCard.button_labels: [Di nuovo, Difficile, Bene, Facile]
+    button_labels: list[str] = Field(default_factory=list, max_length=4)
+    has_audio: bool = False
+    can_undo: bool = False
+    # una risposta è in viaggio verso il backend: i pulsanti vanno disattivati
+    busy: bool = False
+
+
+class RemoteCommand(BaseModel):
+    """Un tasto premuto sul telefono. `card_id` evita che un doppio tocco valuti la
+    carta successiva: lo schermo esegue il comando solo se la carta è ancora quella."""
+
+    action: Literal["reveal", "answer", "undo", "replay"]
+    rating: Literal[1, 2, 3, 4] | None = None
+    card_id: int | None = None
+
+
 class NotetypeField(BaseModel):
     name: str
     ord: int

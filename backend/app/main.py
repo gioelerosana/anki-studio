@@ -16,6 +16,8 @@ from .config import Settings, get_settings
 from .logging_setup import register_secret, setup_logging
 from .routers import auth, browse, decks, media, notes, study, sync
 from .oidc import OIDCClient
+from .remote import RemoteHub
+from .remote import router as remote_router
 from .security import RateLimiter, Signer, require_auth, security_headers, session_key
 from .sync import SyncService, next_auto_delay
 from .web import pwa_app
@@ -156,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.signer = Signer(session_key(settings))
     app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
+    app.state.remote = RemoteHub()
     if settings.anki_dev_login:
         log.warning("ANKI_DEV_LOGIN attivo: chiunque raggiunga l'API entra come \"dev\"")
 
@@ -240,8 +243,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     protected = [Depends(require_auth)]
     for r in (decks.router, study.router, notes.router, browse.router, sync.router, media.router):
         app.include_router(r, prefix="/api", dependencies=protected)
-    # login, callback e logout gestiscono da sé l'accesso
+    # login, callback e logout gestiscono da sé l'accesso; il WebSocket del telecomando
+    # anche (require_auth vuole una Request HTTP): app/security.websocket_session
     app.include_router(auth.router, prefix="/api")
+    app.include_router(remote_router, prefix="/api")
     if web is not None:
         # La PWA è il "default" del router, non un Mount su "/": così entra in gioco solo
         # quando nessuna rotta corrisponde, e un metodo sbagliato su una rotta API resta 405.

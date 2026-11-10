@@ -8,8 +8,11 @@
  * Tocco: tap sulla carta = mostra risposta; quattro pulsanti in basso per i
  * pollici. Tastiera (Magic Keyboard): Spazio/Invio, 1–4, Z annulla, R audio,
  * E modifica, A aggiungi, - seppellisci, @ sospendi, Ctrl+1–7 flag, Esc torna ai mazzi.
+ *
+ * Telecomando: la stessa sessione si comanda dal telefono (RemoteScreen). I tasti del
+ * telefono arrivano qui e passano dalle stesse funzioni della tastiera.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   CircleCheck,
@@ -19,18 +22,20 @@ import {
   Pause,
   Pencil,
   Plus,
+  Smartphone,
   Undo2,
   Volume2,
 } from 'lucide-react';
 import { Banner, Button, HeaderBar, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import { findDeck } from '../api/decks';
-import type { Rating, StudyState, TodayStats } from '../api/types';
+import type { Rating, RemoteCommand, RemoteScreenState, StudyState, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { useToast } from '../app/toasts';
 import { QueueCounts } from '../components/QueueCounts';
 import { EditNoteModal } from '../notes/EditNoteModal';
+import { useRemoteScreen } from '../remote/useRemoteScreen';
 import { useSettings } from '../settings';
 import { CardView } from '../study/CardView';
 import { FlagModal } from '../study/FlagModal';
@@ -248,7 +253,52 @@ export function StudyScreen({ deckId }: { deckId: number }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [deckId]);
 
+  // Telecomando: lo stato che vede il telefono e i suoi tasti, eseguiti come quelli della tastiera.
   const hasAudio = !!card && card.question_av.length + card.answer_av.length > 0;
+  const canUndo = !!state?.undo_label || answeredInSession > 0;
+  const remoteState = useMemo<RemoteScreenState | null>(
+    () =>
+      state
+        ? {
+            deck_id: deckId,
+            deck_name: deckName || state.deck_name || '',
+            done: state.done || !card,
+            card_id: card?.card_id ?? null,
+            revealed,
+            queue: card?.queue ?? null,
+            counts: state.counts,
+            button_labels: (card?.button_labels ?? []).map(cleanLabel),
+            has_audio: hasAudio,
+            can_undo: canUndo,
+            busy,
+          }
+        : null,
+    [busy, canUndo, card, deckId, deckName, hasAudio, revealed, state],
+  );
+  const onRemoteCommand = useCallback(
+    (command: RemoteCommand) => {
+      const k = keys.current;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) {
+        toast('info', 'Telecomando in pausa: chiudi la finestra aperta');
+        return;
+      }
+      const sameCard = !!k.card && command.card_id === k.card.card_id;
+      if (command.action === 'reveal' && sameCard && !k.revealed) k.reveal();
+      else if (command.action === 'answer' && sameCard && k.revealed && command.rating) void k.answer(command.rating);
+      else if (command.action === 'undo') void k.undo();
+      else if (command.action === 'replay') k.replay();
+    },
+    [toast],
+  );
+  const { remotes } = useRemoteScreen(remoteState, onRemoteCommand);
+  const hadRemote = useRef(false);
+  useEffect(() => {
+    if (remotes > 0 && !hadRemote.current) {
+      hadRemote.current = true;
+      toast('success', 'Telecomando collegato');
+    }
+  }, [remotes, toast]);
+
   const menuItems: MenuItem[] = card
     ? [
         { id: 'edit', label: 'Modifica nota', icon: <Pencil />, shortcut: 'E', onSelect: () => setEditing(card.note_id) },
@@ -272,6 +322,11 @@ export function StudyScreen({ deckId }: { deckId: number }) {
         rightContent={
           <>
             {state && !state.done ? <QueueCounts counts={state.counts} current={card?.queue} className="mr-2 max-sm:hidden" /> : null}
+            {remotes > 0 ? (
+              <span role="img" aria-label="Telecomando collegato" title="Telecomando collegato" className="mx-1 text-muted-foreground">
+                <Smartphone className="size-4" />
+              </span>
+            ) : null}
             {card && card.flag > 0 ? (
               <span
                 role="img"

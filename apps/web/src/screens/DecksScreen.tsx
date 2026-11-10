@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Cloud, CloudAlert, CloudOff, Layers, Plus, Settings } from 'lucide-react';
+import { ChevronRight, Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Plus, Settings } from 'lucide-react';
 import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
@@ -86,6 +86,10 @@ export function DecksScreen() {
         }
         rightContent={
           <>
+            {/* Il telefono come telecomando dello studio aperto sul computer (RemoteScreen). */}
+            <IconButton label="Telecomando" onClick={() => navigate({ name: 'remote' })}>
+              <Gamepad2 />
+            </IconButton>
             <IconButton label="Aggiungi carta" onClick={() => navigate({ name: 'add', deckId: null })}>
               <Plus />
             </IconButton>
