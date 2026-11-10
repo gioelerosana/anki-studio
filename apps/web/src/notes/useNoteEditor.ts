@@ -8,22 +8,32 @@ import { api } from '../api/client';
 import type { Note, Notetype, NotetypeField } from '../api/types';
 import { getNotetypes } from './notetypes';
 import { parseTags } from './NoteFields';
+import { isReservedTag } from './tags';
 
 export interface NoteEditor {
   note: Note | null;
   notetype: Notetype | null;
   fields: NotetypeField[];
   values: Record<string, string>;
+  /** Solo i tag modificabili, separati da spazi (i riservati non ci sono). */
   tags: string;
+  /** Tag riservati della nota (`hub::bozza`, `agent::…`, `ext::…`): si mostrano, non si toccano. */
+  reservedTags: string[];
+  /** Tag riservati digitati nel campo: il salvataggio resta bloccato finché non li si toglie. */
+  typedReserved: string[];
   setValue: (name: string, value: string) => void;
   setTags: (tags: string) => void;
   dirty: boolean;
+  /** Modificato e senza tag riservati digitati: l'unico caso in cui «Salva» è attivo. */
+  canSave: boolean;
   loading: boolean;
   saving: boolean;
   error: unknown;
   save: () => Promise<Note | null>;
   reload: () => void;
 }
+
+const editableTags = (tags: string[]) => tags.filter((t) => !isReservedTag(t)).join(' ');
 
 export function useNoteEditor(noteId: number | null): NoteEditor {
   const [note, setNote] = useState<Note | null>(null);
@@ -45,7 +55,7 @@ export function useNoteEditor(noteId: number | null): NoteEditor {
         setNote(n);
         setNotetype(types.find((t) => t.id === n.notetype_id) ?? null);
         setValues(n.fields);
-        setTags(n.tags.join(' '));
+        setTags(editableTags(n.tags));
       })
       .catch((err: unknown) => !cancelled && setError(err));
     return () => {
@@ -59,15 +69,22 @@ export function useNoteEditor(noteId: number | null): NoteEditor {
     [notetype, values],
   );
 
+  const typedReserved = useMemo(() => parseTags(tags).filter(isReservedTag), [tags]);
+  const tagsChanged = note !== null && parseTags(tags).join(' ') !== editableTags(note.tags);
+
   const save = useCallback(async (): Promise<Note | null> => {
-    if (!note) return null;
+    if (!note || typedReserved.length > 0) return null;
     setSaving(true);
     setError(null);
     try {
-      const saved = await api.updateNote(note.id, { fields: values, tags: parseTags(tags) });
+      // I tag si rimandano solo se l'utente li ha cambiati; allora la lista porta anche quelli
+      // riservati com'erano (il PATCH sostituisce l'elenco: senza, si toglierebbero).
+      const patch: { fields: Record<string, string>; tags?: string[] } = { fields: values };
+      if (tagsChanged) patch.tags = [...note.tags.filter(isReservedTag), ...parseTags(tags)];
+      const saved = await api.updateNote(note.id, patch);
       setNote(saved);
       setValues(saved.fields);
-      setTags(saved.tags.join(' '));
+      setTags(editableTags(saved.tags));
       return saved;
     } catch (err) {
       setError(err);
@@ -75,11 +92,9 @@ export function useNoteEditor(noteId: number | null): NoteEditor {
     } finally {
       setSaving(false);
     }
-  }, [note, values, tags]);
+  }, [note, values, tags, tagsChanged, typedReserved]);
 
-  const dirty =
-    note !== null &&
-    (Object.entries(values).some(([k, v]) => note.fields[k] !== v) || parseTags(tags).join(' ') !== note.tags.join(' '));
+  const dirty = note !== null && (Object.entries(values).some(([k, v]) => note.fields[k] !== v) || tagsChanged);
 
   return {
     note,
@@ -87,9 +102,12 @@ export function useNoteEditor(noteId: number | null): NoteEditor {
     fields,
     values,
     tags,
+    reservedTags: note ? note.tags.filter(isReservedTag) : [],
+    typedReserved,
     setValue: (name, value) => setValues((prev) => ({ ...prev, [name]: value })),
     setTags,
     dirty,
+    canSave: dirty && typedReserved.length === 0,
     loading: noteId !== null && note === null && error === null,
     saving,
     error,

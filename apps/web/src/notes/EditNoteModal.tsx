@@ -31,7 +31,7 @@ export function EditNoteModal({
           <Button variant="secondary" onClick={onClose} className="coarse:h-10">
             Annulla
           </Button>
-          <Button onClick={save} loading={editor.saving} disabled={!editor.dirty} className="coarse:h-10">
+          <Button onClick={save} loading={editor.saving} disabled={!editor.canSave} className="coarse:h-10">
             Salva
           </Button>
         </>
@@ -46,7 +46,7 @@ export function EditNoteModal({
             isCloze={editor.notetype?.is_cloze ?? false}
             onChange={editor.setValue}
           />
-          <TagsInput value={editor.tags} onChange={editor.setTags} />
+          <TagsInput value={editor.tags} onChange={editor.setTags} reserved={editor.reservedTags} typedReserved={editor.typedReserved} />
         </div>
       ) : editor.error ? null : (
         <div className="flex justify-center p-6 text-muted-foreground">

@@ -87,9 +87,9 @@ export function NoteInspector({
           {editor.note ? (
             <>
               <NoteFields fields={editor.fields} values={editor.values} isCloze={editor.notetype?.is_cloze ?? false} onChange={editor.setValue} />
-              <TagsInput value={editor.tags} onChange={editor.setTags} />
+              <TagsInput value={editor.tags} onChange={editor.setTags} reserved={editor.reservedTags} typedReserved={editor.typedReserved} />
               <div className="flex justify-end">
-                <Button variant={saveIsPrimary ? 'default' : 'outline'} loading={editor.saving} disabled={!editor.dirty} onClick={() => void save()} className="coarse:h-10">
+                <Button variant={saveIsPrimary ? 'default' : 'outline'} loading={editor.saving} disabled={!editor.canSave} onClick={() => void save()} className="coarse:h-10">
                   Salva modifiche
                 </Button>
               </div>

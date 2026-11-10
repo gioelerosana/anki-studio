@@ -64,6 +64,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     try {
       const data = (await res.json()) as { detail?: unknown };
       if (typeof data.detail === 'string') detail = data.detail;
+      // validazione di FastAPI (422): `detail` è un elenco di {msg, loc}
+      else if (Array.isArray(data.detail)) {
+        const msgs = data.detail.map((d: unknown) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : '')).filter(Boolean);
+        if (msgs.length > 0) detail = msgs.join('; ');
+      }
     } catch {
       // risposta non JSON
     }

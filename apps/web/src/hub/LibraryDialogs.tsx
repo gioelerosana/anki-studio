@@ -7,6 +7,7 @@ import { Banner, Button, Field, Input, Modal, Select } from '@anki-studio/ui-kit
 import type { DeckNode } from '../api/types';
 import { plural } from '../app/format';
 import { parseTags } from '../notes/NoteFields';
+import { isReservedTag } from '../notes/tags';
 import { describeError } from './errors';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -98,10 +99,10 @@ export function TagsDialog({
 
   const toAdd = parseTags(add);
   const toRemove = parseTags(remove);
-  // hub::bozza lega il tag alle carte sospese: toglierlo da qui lascerebbe carte sospese senza
-  // più comparire nell'Inbox. Si approva o si scarta da lì.
-  const touchesDraft = [...toAdd, ...toRemove].some((t) => t.toLowerCase() === 'hub::bozza');
-
+  // I tag dell'hub non si toccano da qui: `hub::bozza` lega la nota alle carte sospese (togliendolo
+  // restano sospese e fuori dall'Inbox: si approva o si scarta da lì), `agent::`/`ext::` sono la
+  // provenienza. Il backend risponde 422; qui lo si dice prima.
+  const reserved = [...new Set([...toAdd, ...toRemove].filter(isReservedTag))];
   return (
     <Modal
       isOpen={isOpen}
@@ -116,7 +117,7 @@ export function TagsDialog({
           </Button>
           <Button
             loading={busy}
-            disabled={(toAdd.length === 0 && toRemove.length === 0) || touchesDraft}
+            disabled={(toAdd.length === 0 && toRemove.length === 0) || reserved.length > 0}
             onClick={() => onConfirm({ add: toAdd, remove: toRemove })}
             className="coarse:h-10"
           >
@@ -127,7 +128,11 @@ export function TagsDialog({
     >
       <div className="flex flex-col gap-4">
         {error ? <Banner variant="error">{describeError(error).message}</Banner> : null}
-        {touchesDraft ? <Banner variant="warning">Il tag hub::bozza si gestisce dall’Inbox: lì si approva o si scarta.</Banner> : null}
+        {reserved.length > 0 ? (
+          <Banner variant="warning">
+            {reserved.join(', ')}: i tag agent::, ext:: e hub:: li gestisce l’app (le bozze si approvano o si scartano dall’Inbox) e non si aggiungono né si tolgono da qui.
+          </Banner>
+        ) : null}
         <datalist id="library-tag-suggestions">
           {suggestions.map((t) => (
             <option key={t} value={t} />
