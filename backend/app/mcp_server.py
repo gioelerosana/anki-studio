@@ -460,7 +460,7 @@ def build_mcp(app: FastAPI, settings: Settings) -> McpApp:
             str, Field(description="Contenuto del file in base64 standard, senza prefisso `data:`.")
         ],
     ) -> MediaOut:
-        """Carica nella collezione un'immagine (png, jpg, gif, webp, svg senza script), un audio
+        """Carica nella collezione un'immagine (png, jpg, gif, webp; gli SVG NON sono ammessi), un audio
         (mp3, ogg, wav, m4a, aac, flac) o un video breve (mp4, webm). Massimo 10 MB DECODIFICATI
         (~13 MB di base64): meglio file piccoli. L'estensione deve corrispondere al contenuto. Il
         nome si sanifica e Anki può cambiarlo se esiste già un file diverso: usa il `filename`

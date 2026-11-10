@@ -609,11 +609,6 @@ def _is_adts(d: bytes) -> bool:
     return len(d) > 1 and d[0] == 0xFF and d[1] & 0xF6 == 0xF0
 
 
-def _is_svg(d: bytes) -> bool:
-    head = d[:2048].decode("utf-8", "ignore").lstrip("﻿ \t\r\n").lower()
-    return head.startswith(("<svg", "<?xml", "<!doctype svg", "<!--")) and "<svg" in head
-
-
 # estensione → (tipo, controllo sul contenuto). L'estensione deve corrispondere al contenuto:
 # un `.png` che è un eseguibile, o un `.mp3` che è HTML, si rifiuta.
 _MEDIA_TYPES: dict[str, tuple[str, object]] = {
@@ -622,7 +617,6 @@ _MEDIA_TYPES: dict[str, tuple[str, object]] = {
     "jpeg": ("immagine", _starts(b"\xff\xd8\xff")),
     "gif": ("immagine", _starts(b"GIF87a", b"GIF89a")),
     "webp": ("immagine", _riff(b"WEBP")),
-    "svg": ("immagine", _is_svg),
     "mp3": ("audio", _is_mp3),
     "ogg": ("audio", _starts(b"OggS")),
     "wav": ("audio", _riff(b"WAVE")),
@@ -634,10 +628,6 @@ _MEDIA_TYPES: dict[str, tuple[str, object]] = {
 }
 MEDIA_EXTENSIONS = tuple(_MEDIA_TYPES)
 
-# script nell'SVG: i media sono serviti con una CSP `sandbox` (security._MEDIA_CSP) e un <img>
-# non esegue mai script, ma un agente non ha motivo di scriverne: meglio non portarli in
-# giro nella collezione (finiscono anche su AnkiWeb e sugli altri dispositivi)
-_SVG_ACTIVE = re.compile(r"<\s*script|<\s*foreignobject|\son[a-z]+\s*=|javascript\s*:", re.I)
 # lista bianca: lettere (anche accentate), cifre, `_`, `.` e `-`; il resto diventa `_`
 _UNSAFE_NAME_CHARS = re.compile(r"[^\w.\-]+")
 
@@ -667,6 +657,11 @@ def add_media(col: Collection, filename: str, data_base64: str) -> MediaOut:
     nei campi (`<img src="…">` o `[sound:…]`)."""
     name = clean_media_name(filename)
     ext = name.rpartition(".")[2].lower() if "." in name else ""
+    if ext == "svg":
+        # un SVG è codice (script, `onload`, entità, riferimenti esterni) e viaggia con la sync
+        # su AnkiWeb e sugli altri dispositivi: un filtro a espressioni regolari si aggira
+        # sempre, quindi non si ammette del tutto
+        raise HubError("Gli SVG non sono ammessi (possono contenere codice): usa un PNG, un JPG o un WebP")
     if ext not in _MEDIA_TYPES:
         raise HubError(
             f"Estensione «{ext or '(nessuna)'}» non ammessa: usa una di {', '.join(MEDIA_EXTENSIONS)}"
@@ -689,8 +684,6 @@ def add_media(col: Collection, filename: str, data_base64: str) -> MediaOut:
     kind, matches = _MEDIA_TYPES[ext]
     if not matches(data):  # type: ignore[operator]
         raise HubError(f"Il contenuto non è un {kind} «.{ext}» valido: estensione e contenuto non coincidono")
-    if ext == "svg" and _SVG_ACTIVE.search(data.decode("utf-8", "ignore")):
-        raise HubError("L'SVG contiene script o elementi attivi: non ammessi")
 
     final = col.media.write_data(name, data)
     log.info("Media aggiunto", extra={"media_file": final, "size": len(data)})

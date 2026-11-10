@@ -40,7 +40,7 @@ def media_dir(client) -> Path:
     "name,data",
     [
         ("gatto.png", PNG), ("foto.jpg", JPG), ("foto.jpeg", JPG), ("anim.gif", GIF),
-        ("img.webp", WEBP), ("logo.svg", SVG), ("voce.mp3", MP3), ("voce.ogg", OGG),
+        ("img.webp", WEBP), ("voce.mp3", MP3), ("voce.ogg", OGG),
         ("voce.wav", WAV), ("voce.m4a", M4A), ("voce.aac", AAC), ("voce.flac", FLAC),
         ("clip.mp4", MP4), ("clip.webm", WEBM),
     ],
@@ -69,9 +69,10 @@ def test_same_content_same_name_is_idempotent_and_a_different_file_gets_another_
 
 
 def test_the_returned_media_is_served_with_a_sandboxing_csp(client):
-    """Gli SVG possono contenere script: i media escono con `sandbox` e senza `script-src`,
-    quindi aprirli direttamente non esegue niente sulla nostra origine."""
-    name = upload(client, "logo.svg", SVG).json()["filename"]
+    """I media sono contenuto dell'utente (anche un `.svg` o `.html` arrivato con la sync):
+    escono con `sandbox` e senza `script-src`, quindi aprirli direttamente non esegue niente
+    sulla nostra origine."""
+    name = upload(client, "gatto.png", PNG).json()["filename"]
     r = client.get(f"/api/media/{name}")
     assert r.status_code == 200
     csp = r.headers["content-security-policy"]
@@ -99,7 +100,6 @@ def test_too_large(client):
         ("voce.mp3", PNG),  # immagine con estensione audio
         ("foto.jpg", PNG),
         ("clip.mp4", WEBM),
-        ("logo.svg", PNG),
         ("vuoto.png", b""),
     ],
 )
@@ -118,14 +118,21 @@ def test_extension_not_allowed(client, name):
 @pytest.mark.parametrize(
     "svg",
     [
+        SVG,  # anche uno innocuo: non si ammettono SVG
         b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
-        b'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>',
-        b'<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><rect/></a></svg>',
-        b'<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><div/></foreignObject></svg>',
+        # le forme che un filtro a espressioni regolari non vede
+        b'<svg/onload=alert(1)>',
+        b'<svg xmlns="http://www.w3.org/2000/svg"><a xlink:href="https://evil.test/x"><rect/></a></svg>',
+        b'<!DOCTYPE svg [<!ENTITY x "&#x3c;script&#x3e;">]><svg xmlns="http://www.w3.org/2000/svg">&x;</svg>',
+        PNG,
     ],
 )
-def test_svg_with_active_content_is_rejected(client, svg):
-    assert upload(client, "x.svg", svg).status_code == 422
+@pytest.mark.parametrize("name", ["x.svg", "X.SVG", "y.SvG"])
+def test_svg_is_never_accepted(client, svg, name):
+    r = upload(client, name, svg)
+    assert r.status_code == 422, r.text
+    assert "SVG" in r.json()["detail"] and "PNG" in r.json()["detail"]
+    assert not any(p.suffix.lower() == ".svg" for p in media_dir(client).iterdir())
 
 
 @pytest.mark.parametrize(
