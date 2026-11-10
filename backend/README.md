@@ -66,13 +66,14 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | `ANKI_OIDC_ALLOWED_USERS` / `_GROUPS` | vuoti | Seconda barriera dopo le policy di Authentik: `preferred_username`/email o gruppi ammessi (virgole). Vuoti = decide Authentik |
 | `ANKI_SESSION_DAYS` | `30` | Durata della sessione della PWA; scaduta, la PWA rifà il login da sola |
 | `ANKI_DEV_LOGIN` | `false` | Solo sviluppo: login senza Authentik. Rifiutato insieme ad `ANKI_WEB_DIR` |
-| `ANKI_API_TOKEN` / `_FILE` | — | Facoltativo, per script e test: `Authorization: Bearer` (min. 16 caratteri). La PWA non lo usa |
+| `ANKI_API_TOKEN` / `_FILE` | — | Facoltativo, per script e test: `Authorization: Bearer` (min. 16 caratteri). È il token "amministratore": può tutto. La PWA non lo usa. I token per gli agenti si creano dalla PWA o da `/api/tokens` (vedi "Agenti, bozze e token") |
 | `ANKI_WEB_DIR` | vuoto (`/srv/web` nel container) | Build della PWA da servire sulla stessa origine; vuoto = solo API |
 | `ANKI_STUDIO_VERSION` / `_REVISION` | `dev` / vuoto | Versione e commit, li imposta il Dockerfile; li riporta `/api/health` |
 | `ANKI_DATA_DIR` | `./data` (`/data` nel container) | Collezione, media, backup, chiave di sync |
 | `ANKI_SYNC_ENDPOINT` | vuoto = AnkiWeb | URL di un sync server self-hosted |
 | `ANKI_AUTO_SYNC_MINUTES` | `10` | Sync automatica (0 = solo manuale) |
 | `ANKI_SYNC_ON_STARTUP` | `true` | Sync all'avvio (in background) |
+| `ANKI_SYNC_AFTER_WRITE_SECONDS` | `30` | Dopo una scrittura da agente (o dalle rotte hub) la sync parte da sola dopo questi secondi, con più scritture raggruppate in una; `0` = spenta. Niente da fare se AnkiWeb non è collegato |
 | `ANKI_SYNC_IO_TIMEOUT` | `60` | Secondi senza dati prima di dare la rete per persa |
 | `ANKI_BUSY_TIMEOUT` | `20` | Quanto una richiesta aspetta la collezione occupata prima del 503 |
 | `ANKI_LANG` | `it` | Lingua di Anki per intervalli ("4g") e messaggi |
@@ -303,6 +304,15 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | POST | `/api/sync/login` · `/logout` | Collega o scollega AnkiWeb (429 dopo troppi tentativi) |
 | POST | `/api/sync` | Sync normale (409 = serve la sync completa) |
 | POST | `/api/sync/full` | `{direction: "upload" \| "download"}`, solo dopo conferma dell'utente |
+| POST | `/api/hub/notes/batch` | Hub: fino a 100 note (`HubBatchIn` → `HubBatchOut`), `dry_run`, `create_missing_decks`, `draft`; ogni nota ha il suo esito |
+| POST | `/api/hub/decks` | `{name}` → crea il mazzo, idempotente (`created: false` se esisteva) |
+| GET | `/api/hub/summary` · `/api/hub/drafts?limit&offset` | Numero di bozze (badge) · elenco delle bozze |
+| POST | `/api/hub/drafts/approve` · `/discard` | `{note_ids}`: approva (carte riattivate) · scarta (cancella, solo se è davvero una bozza) |
+| GET | `/api/cards/{id}/preview` | La carta renderizzata fuori dalla coda (`CardPreview`), anche se sospesa |
+| POST | `/api/notes/{id}/move` | `{deck_id}`: sposta tutte le carte della nota |
+| DELETE | `/api/notes/{id}` | Cancella la nota con le sue carte (204) |
+| POST | `/api/notes/tags` | `{note_ids, add, remove}`: tag in blocco → `{updated}` |
+| GET/POST/PATCH/DELETE | `/api/tokens[/{id}]` | Token per gli agenti: elenco · crea (token in chiaro **solo qui**) · `scope`/`review` · revoca |
 | WS | `/api/remote?role=screen&screen_id=…` · `?role=remote` | Telecomando: lo studio aperto (`screen`) e il telefono (`remote`), vedi sotto |
 
 Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **403** modifica da un'altra origine, **429** troppi tentativi (`Retry-After`),
@@ -341,6 +351,64 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
   mostrata. Con più schermate aperte comanda quella in primo piano per ultima (`claim`).
   Niente abbinamento: stesso account, stessa collezione.
 
+## Agenti, bozze e token
+
+Contratto e motivazioni in [`docs/PIANO-HUB.md`](../docs/PIANO-HUB.md); la logica sta in `app/hub.py`
+(senza FastAPI, la riuserà il server MCP) e le rotte in `routers/hub.py`, `routers/notes.py`,
+`routers/tokens.py`.
+
+**Token.** `ask_` + 32 byte casuali. Sul disco (`data/tokens.json`, 0600, scrittura atomica) resta
+solo l'hash SHA-256: il chiaro si vede una volta sola, nella risposta di `POST /api/tokens`, e non si
+recupera. Ogni token ha `scope` (`read` | `write`), `review` (le sue note nascono bozza) e `last_used_at`.
+Il nome diventa lo slug del tag di provenienza `agent::<slug>` (`a-z0-9-`), quindi è unico e non si
+cambia. I tentativi sbagliati contano nello stesso limite per IP di `ANKI_API_TOKEN` (429).
+
+**Chi può cosa** (un solo controllo in `security.token_may`, deny-by-default: una rotta nuova è
+vietata ai token con scope finché non la si elenca lì):
+
+| | sessione e `ANKI_API_TOKEN` | token `write` | token `read` |
+|---|---|---|---|
+| `GET` decks, notetypes, search/notes, tags, notes/{id}, cards/{id}/preview, hub/summary, hub/drafts, sync | sì | sì | sì |
+| `POST` hub/notes/batch, hub/decks, sync | sì | sì | 403 |
+| `PATCH` notes/{id} | sì | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 |
+| approva/scarta bozze, move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, media, `auth/me`, telecomando | sì | 403 | 403 |
+
+Un token con scope risponde 403 con "Questo token non può fare questa operazione".
+
+**Creare note.** `POST /api/hub/notes/batch` (max 100 note, 422 oltre). Per ogni nota `deck` e
+`notetype` si danno per nome o per id; l'esito è per nota e un errore non ferma le altre:
+`created`, `updated`, `unchanged`, `duplicate` o `error` (campo inesistente, tipo di nota o mazzo
+mancante senza `create_missing_decks`, primo campo vuoto, cloze mancante...). `dry_run` restituisce
+lo stesso esito che avrebbe la scrittura senza scrivere niente (nemmeno i mazzi). Tutta la batch è
+**una sola voce di undo** (`col.undo()`); lo studio non la propone come "Annulla".
+
+- **Idempotenza**: `external_id` → tag `ext::<id>`. Rimandare la nota la aggiorna (campi passati,
+  tag nuovi: quelli vecchi non si tolgono) o la lascia com'è (`unchanged`); mazzo e stato di bozza
+  non cambiano. Un token vede solo i propri `external_id`. Senza `external_id`, un primo campo uguale
+  a una nota dello stesso tipo dà `duplicate` (con `note_id` di quella esistente); con `external_id`
+  l'agente dice che è un'altra nota e si crea.
+- **Provenienza**: le note di un token hanno `agent::<slug>`; quelle della sessione o di
+  `ANKI_API_TOKEN` no. I tag `agent::`, `ext::` e `hub::` passati nella richiesta si ignorano, e gli spazi
+  nei tag diventano `_`.
+- **Bozze**: carte sospese + tag `hub::bozza`, quindi fuori dallo studio. Un token con `review` ha
+  sempre bozze (`draft: false` non vale); gli altri scelgono con `draft` (default: note normali).
+  `approve` toglie il tag e riattiva le carte; `discard` cancella **solo** note che hanno `hub::bozza`
+  (le altre restano, anche se l'id è nella richiesta). Solo sessione/amministratore.
+- **Anteprima**: `GET /api/cards/{id}/preview` rende la carta come lo studio (stessi media, CSS e
+  `card_class`) ma senza coda: serve anche per le carte sospese.
+- **Sync dopo la scrittura**: vedi `ANKI_SYNC_AFTER_WRITE_SECONDS`. Un timer a finestra fissa raggruppa le
+  scritture ravvicinate in una sola sync, che aspetta il suo turno se un'altra è in corso (una alla
+  volta) e non parte se AnkiWeb non è collegato o c'è un conflitto da risolvere.
+
+```bash
+ADMIN=...   # ANKI_API_TOKEN
+TOKEN=$(curl -s -X POST localhost:8000/api/tokens -H "Authorization: Bearer $ADMIN" \
+  -H 'Content-Type: application/json' -d '{"name":"Claude","scope":"write","review":true}' | jq -r .token)
+curl -s -X POST localhost:8000/api/hub/notes/batch -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"dry_run":true,"create_missing_decks":true,"notes":[
+    {"deck":"Lingue::Spagnolo","notetype":"Basic","fields":{"Front":"saltar","Back":"saltare"},"external_id":"v-saltar"}]}'
+```
+
 ## Dipendenze
 
 `requirements.lock` fissa versioni e hash di tutte le dipendenze per l'immagine (e per la CI).
@@ -360,6 +428,10 @@ uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.1
 limite al body, token da file e versione in `/api/health`. `tests/test_auth.py` copre il login OIDC
 con un provider finto: PKCE, `state`, controlli sull'ID token, utenti e gruppi ammessi, CSRF,
 cookie manomessi, logout, login di sviluppo.
+
+`tests/test_hub.py` copre batch, idempotenza, bozze, anteprima, spostamenti e tag; `test_tokens.py` i token
+(hash a riposo, rate limit, revoca); `test_permissions.py` la matrice dei permessi; `test_sync_after_write.py`
+il debounce della sync dopo la scrittura.
 
 `tests/test_sync_e2e.py` avvia per ogni test un sync server locale (`python -m anki.syncserver`,
 lo stesso protocollo di AnkiWeb) e un secondo client che fa da "Anki desktop": login, primo full
