@@ -84,6 +84,12 @@ def test_unknown_notetype_error_lists_the_available_ones(client):
     assert "Disponibili" in err and "«Basic»" in err
 
 
+def test_unknown_field_error_lists_the_valid_ones(client):
+    out = post_batch(client, [{"deck": "D", "notetype": "Basic", "fields": {"Nope": "a"}}], create_missing_decks=True)
+    err = out["results"][0]["error"]
+    assert "Campi validi" in err and "«Front»" in err and "«Back»" in err
+
+
 def test_batch_cap_is_100(client):
     assert client.post(BATCH, json={"notes": [basic(f"n{i}") for i in range(101)]}).status_code == 422
     assert client.post(BATCH, json={"notes": []}).status_code == 422

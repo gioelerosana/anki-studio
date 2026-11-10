@@ -338,7 +338,11 @@ def _plan_note(
     field_names = {f["name"] for f in model["flds"]}
     unknown = sorted(set(spec.fields) - field_names)
     if unknown:
-        return _error(index, f"Campi inesistenti per «{model['name']}»: {unknown}")
+        # anche i nomi dei campi seguono la lingua della collezione (Fronte/Retro)
+        valid = ", ".join(f"«{f['name']}»" for f in model["flds"])
+        return _error(
+            index, f"Campi inesistenti per «{model['name']}»: {unknown}. Campi validi: {valid}"
+        )
 
     wanted_tags = user_tags(spec.tags)
     ext_tag = EXT_PREFIX + spec.external_id if spec.external_id else None
