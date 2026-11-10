@@ -51,3 +51,22 @@ def client(seeded):
         c.headers["Authorization"] = f"Bearer {TOKEN}"
         c.deck_id = did
         yield c
+
+
+@pytest.fixture
+def make_token(client):
+    """Crea un token per gli agenti (con l'accesso amministratore del client) e restituisce
+    gli header da passare alle richieste e la risposta di creazione."""
+
+    def make(name="claude", scope="write", review=False):
+        r = client.post("/api/tokens", json={"name": name, "scope": scope, "review": review})
+        assert r.status_code == 201, r.text
+        body = r.json()
+        return {"Authorization": f"Bearer {body['token']}"}, body
+
+    return make
+
+
+def note_count(client) -> int:
+    with client.app.state.manager.use() as col:
+        return col.note_count()

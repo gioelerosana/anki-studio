@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     anki_cors_origins: str = ""
     anki_auto_sync_minutes: float = 10
     anki_sync_on_startup: bool = True
+    # Dopo una scrittura da agente (o dalle rotte hub) la sync parte da sola dopo questi
+    # secondi, con più scritture raggruppate in una sola sync. 0 = spenta.
+    anki_sync_after_write_seconds: float = Field(default=30, ge=0)
 
     # Server di sync: vuoto = AnkiWeb. Per un server self-hosted (anche quello
     # incluso nel pacchetto `anki`, python -m anki.syncserver) es. http://host:8080/
@@ -170,6 +173,10 @@ class Settings(BaseSettings):
     @property
     def sync_auth_path(self) -> Path:
         return self.anki_data_dir / "sync_auth.json"
+
+    @property
+    def tokens_path(self) -> Path:
+        return self.anki_data_dir / "tokens.json"
 
     @property
     def backup_dir(self) -> Path:

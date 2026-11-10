@@ -8,15 +8,20 @@ import hmac
 import json
 import logging
 import math
+import re
 import secrets
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
+from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
 from starlette.requests import HTTPConnection
 
 from .config import Settings, get_settings
+from .logging_setup import register_secret
+from .tokens import TOKEN_PREFIX, TokenStore, agent_slug
 
 log = logging.getLogger(__name__)
 
@@ -198,23 +203,118 @@ def _same_origin(request: HTTPConnection, settings: Settings) -> bool:
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
-def require_auth(request: Request, settings: Settings = Depends(get_settings)) -> dict:
-    """Sessione OIDC (cookie HttpOnly) o, per script e test, `Authorization: Bearer`.
+@dataclass(frozen=True)
+class Identity:
+    """Chi sta chiamando. `session` e `admin` (il vecchio ANKI_API_TOKEN) possono tutto;
+    `token` (`ask_…`) è limitato da `scope` e dalla matrice qui sotto."""
+
+    kind: Literal["session", "admin", "token"]
+    name: str
+    # admin = nessun limite (sessione e ANKI_API_TOKEN); read/write = token con scope
+    scope: Literal["admin", "read", "write"] = "admin"
+    # token: le note che crea nascono bozza e non può forzare il contrario
+    review: bool = False
+    username: str | None = None
+    token_id: str | None = None
+
+    @property
+    def agent(self) -> str | None:
+        """Slug del tag di provenienza `agent::<slug>`: solo i token con scope ne hanno uno."""
+        return agent_slug(self.name) if self.kind == "token" else None
+
+
+# ---- permessi dei token con scope --------------------------------------------------------
+#
+# Un solo posto, deny-by-default: una rotta nuova è vietata ai token finché non la si
+# elenca qui. Sessione e ANKI_API_TOKEN non passano da qui. I percorsi sono quelli dopo
+# il prefisso /api. `PATCH /notes/{id}` è ammessa per i token write, ma solo sulle note col
+# proprio tag `agent::<nome>`: lo verifica la rotta (serve la collezione).
+
+_READ_ROUTES = (
+    "/decks",
+    "/notetypes",
+    "/search/notes",
+    "/tags",
+    r"/notes/\d+",
+    r"/cards/\d+/preview",
+    "/hub/summary",
+    "/hub/drafts",
+    "/sync",
+)
+_WRITE_ROUTES = (
+    ("POST", "/hub/notes/batch"),
+    ("POST", "/hub/decks"),
+    ("POST", "/sync"),
+    ("PATCH", r"/notes/\d+"),  # solo note proprie, vedi sopra
+)
+_READ_RE = re.compile("|".join(f"(?:{p})" for p in _READ_ROUTES))
+_WRITE_RE = [(m, re.compile(p)) for m, p in _WRITE_ROUTES]
+
+
+def token_may(identity: Identity, method: str, path: str) -> bool:
+    """La matrice "chi può cosa" per un token con scope (docs/PIANO-HUB.md)."""
+    if identity.kind != "token":
+        return True
+    api_path = path.removeprefix("/api")
+    if method == "GET":
+        return _READ_RE.fullmatch(api_path) is not None
+    if identity.scope != "write":
+        return False
+    return any(method == m and rx.fullmatch(api_path) for m, rx in _WRITE_RE)
+
+
+def _forbidden_for_token() -> HTTPException:
+    return HTTPException(status.HTTP_403_FORBIDDEN, "Questo token non può fare questa operazione")
+
+
+def _identify_bearer(request: HTTPConnection, token: str, settings: Settings) -> Identity | None:
+    """L'identità di un token Bearer, o None se non vale (e allora conta come tentativo
+    sbagliato per il rate limit, tranne il caso descritto sotto)."""
+    expected = settings.anki_api_token
+    if expected is not None and secrets.compare_digest(token.encode(), expected.encode()):
+        return Identity(kind="admin", name="Token dell'API")
+    if token.startswith(TOKEN_PREFIX):
+        store: TokenStore = request.app.state.tokens
+        stored = store.verify(token)
+        if stored is not None:
+            # il chiaro non è più in memoria dopo un riavvio: lo si registra qui, così
+            # non compare nei log nemmeno se finisse in un messaggio d'errore
+            register_secret(token)
+            return Identity(
+                kind="token",
+                name=stored.name,
+                scope=stored.scope,
+                review=stored.review,
+                token_id=stored.id,
+            )
+    elif expected is None:
+        # nessun ANKI_API_TOKEN da indovinare: è la PWA di prima (in cache) con il token
+        # vecchio, che non deve far bloccare l'IP proprio mentre passa al login con Authentik
+        return None
+    record_auth_failure(request, "Token")
+    return None
+
+
+def require_auth(request: Request, settings: Settings = Depends(get_settings)) -> Identity:
+    """Sessione OIDC (cookie HttpOnly) o, per script e agenti, `Authorization: Bearer`.
 
     Vale anche per i media: <img> e <audio> delle carte mandano il cookie da sé.
+    Qui si applica anche, in un solo punto, la matrice dei permessi dei token con scope.
     """
     check_blocked(request)
     token = _bearer(request)
     if token is not None:
-        expected = settings.anki_api_token
-        if expected is None:
-            # nessun token da indovinare: è la PWA di prima (in cache) con il token vecchio,
-            # che non deve far bloccare l'IP proprio mentre passa al login con Authentik
+        identity = _identify_bearer(request, token, settings)
+        if identity is None:
             raise _unauthorized()
-        if not secrets.compare_digest(token, expected):
-            record_auth_failure(request, "Token")
-            raise _unauthorized()
-        return {"sub": "api-token", "name": "Token dell'API"}
+        if not token_may(identity, request.method, request.url.path):
+            log.warning(
+                "Operazione non permessa al token",
+                extra={"agent": identity.agent, "method": request.method, "path": request.url.path},
+            )
+            raise _forbidden_for_token()
+        request.state.identity = identity
+        return identity
     session = read_session(request)
     if session is None:
         raise _unauthorized()
@@ -224,15 +324,22 @@ def require_auth(request: Request, settings: Settings = Depends(get_settings)) -
             extra={"client": client_key(request), "path": request.url.path},
         )
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Richiesta da un'altra origine")
-    return session
+    identity = Identity(
+        kind="session",
+        name=str(session.get("name") or ""),
+        username=session.get("username"),
+    )
+    request.state.identity = identity
+    return identity
 
 
-def websocket_session(websocket: HTTPConnection, settings: Settings) -> dict | None:
-    """Come require_auth, per i WebSocket (il telecomando): la sessione o None.
+def websocket_session(websocket: HTTPConnection, settings: Settings) -> Identity | None:
+    """Come require_auth, per i WebSocket (il telecomando): l'identità o None.
 
     Il controllo dell'origine vale anche qui, con qualunque metodo: un WebSocket non è
     soggetto a CORS, e senza questo controllo un'altra pagina di jshep.xyz aperta nello
     stesso browser potrebbe pilotare lo studio con il cookie dell'utente.
+    I token con scope non pilotano lo studio: restano fuori dal telecomando.
     """
     try:
         check_blocked(websocket)
@@ -240,13 +347,8 @@ def websocket_session(websocket: HTTPConnection, settings: Settings) -> dict | N
         return None
     token = _bearer(websocket)
     if token is not None:
-        expected = settings.anki_api_token
-        if expected is None:
-            return None
-        if not secrets.compare_digest(token, expected):
-            record_auth_failure(websocket, "Token")
-            return None
-        return {"sub": "api-token", "name": "Token dell'API"}
+        identity = _identify_bearer(websocket, token, settings)
+        return identity if identity is not None and identity.kind == "admin" else None
     session = read_session(websocket)
     if session is None:
         return None
@@ -256,7 +358,9 @@ def websocket_session(websocket: HTTPConnection, settings: Settings) -> dict | N
             extra={"client": client_key(websocket), "path": websocket.url.path},
         )
         return None
-    return session
+    return Identity(
+        kind="session", name=str(session.get("name") or ""), username=session.get("username")
+    )
 
 
 def check_login_rate(request: Request) -> None:

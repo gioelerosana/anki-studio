@@ -1,6 +1,7 @@
 from fastapi import Request
 
 from .collection import CollectionManager
+from .security import Identity
 from .sync import SyncService
 
 
@@ -10,3 +11,8 @@ def get_manager(request: Request) -> CollectionManager:
 
 def get_sync(request: Request) -> SyncService:
     return request.app.state.sync
+
+
+def get_identity(request: Request) -> Identity:
+    """Chi sta chiamando, già verificato da require_auth (dipendenza di tutti i router)."""
+    return request.state.identity

@@ -14,12 +14,13 @@ from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
 from .logging_setup import register_secret, setup_logging
-from .routers import auth, browse, decks, media, notes, study, sync
+from .routers import auth, browse, decks, media, notes, study, sync, tokens as tokens_router
 from .oidc import OIDCClient
 from .remote import RemoteHub
 from .remote import router as remote_router
 from .security import RateLimiter, Signer, require_auth, security_headers, session_key
 from .sync import SyncService, next_auto_delay
+from .tokens import TokenStore
 from .web import pwa_app
 
 log = logging.getLogger("anki_studio")
@@ -159,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.signer = Signer(session_key(settings))
     app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
     app.state.remote = RemoteHub()
+    app.state.tokens = TokenStore(settings.tokens_path)
     if settings.anki_dev_login:
         log.warning("ANKI_DEV_LOGIN attivo: chiunque raggiunga l'API entra come \"dev\"")
 
@@ -241,7 +243,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     protected = [Depends(require_auth)]
-    for r in (decks.router, study.router, notes.router, browse.router, sync.router, media.router):
+    routers = (
+        decks.router,
+        study.router,
+        notes.router,
+        browse.router,
+        sync.router,
+        media.router,
+        tokens_router.router,
+    )
+    for r in routers:
         app.include_router(r, prefix="/api", dependencies=protected)
     # login, callback e logout gestiscono da sé l'accesso; il WebSocket del telecomando
     # anche (require_auth vuole una Request HTTP): app/security.websocket_session
