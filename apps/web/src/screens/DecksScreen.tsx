@@ -1,36 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Plus, Settings } from 'lucide-react';
+import { Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Plus, Settings } from 'lucide-react';
 import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
-import { QueueCounts } from '../components/QueueCounts';
+import { DeckList } from '../components/DeckList';
 import { primeAudio } from '../study/audio';
 import { useSync } from '../sync/SyncProvider';
-
-/*
- * Mazzi chiusi, per dispositivo. Il campo `collapsed` del backend non si usa:
- * è lo stato di Anki desktop e qui l'albero si apre e chiude con il dito
- * senza toccare la collezione (e senza generare modifiche da sincronizzare).
- */
-const COLLAPSED_KEY = 'anki-studio.collapsed-decks';
-
-function readCollapsed(): Set<number> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as unknown;
-    return new Set(Array.isArray(raw) ? raw.filter((x): x is number => typeof x === 'number') : []);
-  } catch {
-    return new Set();
-  }
-}
 
 export function DecksScreen() {
   const { status, running, runSync, openPanel, dataVersion } = useSync();
   const [decks, setDecks] = useState<DeckNode[] | null>(null);
   const [today, setToday] = useState<TodayStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(readCollapsed);
 
   const load = useCallback(async () => {
     try {
@@ -56,20 +39,6 @@ export function DecksScreen() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
-
-  function toggle(id: number) {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      try {
-        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
-      } catch {
-        // storage non disponibile: vale per questa sessione
-      }
-      return next;
-    });
-  }
 
   const syncError = status?.last_result?.outcome === 'error' || !!status?.media.error || !!status?.full_sync_required;
   const SyncIcon = status && !status.logged_in ? CloudOff : syncError ? CloudAlert : Cloud;
@@ -138,56 +107,18 @@ export function DecksScreen() {
                   <span className="w-7" />
                 </span>
               </div>
-              <ul className="divide-y overflow-hidden rounded-lg border bg-card">
-                {visible(decks, collapsed).map((deck) => (
-                  <DeckRow key={deck.id} deck={deck} collapsed={collapsed.has(deck.id)} onToggle={() => toggle(deck.id)} />
-                ))}
-              </ul>
+              <DeckList
+                decks={decks}
+                onOpen={(deck) => {
+                  // Il tap sul mazzo è il gesto che sblocca l'audio automatico della prima carta (iPadOS).
+                  primeAudio();
+                  navigate({ name: 'study', deckId: deck.id });
+                }}
+              />
             </>
           )}
         </div>
       </main>
     </div>
-  );
-}
-
-function visible(nodes: DeckNode[], collapsed: Set<number>): DeckNode[] {
-  return nodes.flatMap((n) => [n, ...(collapsed.has(n.id) ? [] : visible(n.children, collapsed))]);
-}
-
-function DeckRow({ deck, collapsed, onToggle }: { deck: DeckNode; collapsed: boolean; onToggle: () => void }) {
-  const hasChildren = deck.children.length > 0;
-  const indent = (deck.level - 1) * 1.25;
-  return (
-    <li className="flex items-stretch">
-      <span className="flex shrink-0 items-center" style={{ paddingLeft: `${0.25 + indent}rem` }}>
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label={collapsed ? `Apri ${deck.name}` : `Chiudi ${deck.name}`}
-            aria-expanded={!collapsed}
-            className="flex size-10 items-center justify-center rounded-control text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            <ChevronRight className={cn('size-4 transition-transform duration-150', !collapsed && 'rotate-90')} />
-          </button>
-        ) : (
-          <span className="w-10" />
-        )}
-      </span>
-      <button
-        type="button"
-        onClick={() => {
-          // Il tap sul mazzo è il gesto che sblocca l'audio automatico della prima carta (iPadOS).
-          primeAudio();
-          navigate({ name: 'study', deckId: deck.id });
-        }}
-        className="flex h-14 min-w-0 flex-1 items-center gap-3 pr-4 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      >
-        <span className={cn('flex-1 truncate text-sm', deck.level === 1 ? 'font-medium' : 'text-foreground')}>{deck.name}</span>
-        <QueueCounts counts={deck.counts} cellClassName="w-8" />
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-      </button>
-    </li>
   );
 }

@@ -7,15 +7,24 @@
  * (backend/app/remote.py). Nessun abbinamento: stesso account Authentik, stessa collezione.
  *
  * Pulsanti grandi e in basso, per il pollice, e schermo sempre acceso (Wake Lock) finché
- * il telecomando è aperto.
+ * il telecomando è aperto. Seppellisci, sospendi e flag stanno nel menu in alto: lontani
+ * dal pollice, così non si sospende una carta per sbaglio (e c'è comunque «Annulla»).
+ *
+ * Se sul computer c'è l'elenco dei mazzi, il telefono lo mostra e ne apre uno lì; durante
+ * lo studio «Cambia mazzo» (menu, o a fine mazzo) riporta il computer all'elenco.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { ChevronLeft, CircleCheck, Monitor, Undo2, Volume2 } from 'lucide-react';
-import { Button, EmptyHint, HeaderBar, Spinner, cn } from '@anki-studio/ui-kit';
-import type { Rating, RemoteCommand, RemoteScreenState } from '../api/types';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ChevronLeft, CircleCheck, EyeOff, Flag, Layers, Monitor, MoreHorizontal, Pause, Undo2, Volume2, VolumeOff } from 'lucide-react';
+import { Banner, Button, EmptyHint, HeaderBar, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
+import { api } from '../api/client';
+import type { DeckNode, Rating, RemoteCommand, RemoteScreenState } from '../api/types';
 import { navigate } from '../app/route';
+import { useToast } from '../app/toasts';
+import { DeckList } from '../components/DeckList';
 import { QueueCounts } from '../components/QueueCounts';
 import { useRemoteSocket } from '../remote/useRemoteSocket';
+import { FlagModal } from '../study/FlagModal';
+import { flagColor, flagLabel } from '../study/flags';
 
 const RATINGS: { rating: Rating; label: string }[] = [
   { rating: 1, label: 'Di nuovo' },
@@ -27,7 +36,7 @@ const RATINGS: { rating: Rating; label: string }[] = [
 /** Dopo un tasto, i pulsanti restano spenti finché lo schermo non cambia stato (o per questo tempo). */
 const PENDING_TIMEOUT_MS = 2500;
 
-const stepKey = (s: RemoteScreenState | null) => (s ? `${s.card_id}:${s.revealed}:${s.done}` : '');
+const stepKey = (s: RemoteScreenState | null) => (s ? `${s.view}:${s.deck_id}:${s.card_id}:${s.revealed}:${s.done}` : '');
 
 /** Schermo acceso finché il telecomando è aperto: iOS lo rilascia quando la PWA va in background. */
 function useWakeLock() {
@@ -59,6 +68,8 @@ export function RemoteScreen() {
   const [screen, setScreen] = useState<RemoteScreenState | null>(null);
   const [received, setReceived] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  const [flagging, setFlagging] = useState(false);
+  const toast = useToast();
   useWakeLock();
 
   const { status, send } = useRemoteSocket('role=remote', (message) => {
@@ -67,7 +78,7 @@ export function RemoteScreen() {
     setReceived(true);
   });
 
-  // lo stato è cambiato (carta girata, carta nuova): il tasto è arrivato
+  // lo stato è cambiato (carta girata, carta nuova, mazzo aperto): il tasto è arrivato
   useEffect(() => setPending(null), [screen]);
   useEffect(() => {
     if (pending === null) return;
@@ -85,20 +96,65 @@ export function RemoteScreen() {
 
   const connected = status === 'open';
   const locked = !connected || !screen || screen.busy || (pending !== null && pending === stepKey(screen));
-  const deckLabel = screen?.deck_name.split('::').pop() ?? '';
+  const study = screen?.view === 'study' ? screen : null;
+  const card = study && !study.done && study.card_id !== null ? study : null;
+  const deckLabel = study?.deck_name.split('::').pop() ?? '';
+
+  const cardAction = (action: 'bury' | 'suspend') => {
+    if (!card) return;
+    press({ action, card_id: card.card_id });
+    toast('success', action === 'bury' ? 'Carta seppellita fino a domani' : 'Carta sospesa: «Annulla» la riporta');
+  };
+  const changeDeck = () => press({ action: 'close' });
+  const menuItems: MenuItem[] = [
+    ...(card
+      ? [
+          { id: 'flag', label: 'Flag…', icon: <Flag />, onSelect: () => setFlagging(true) },
+          { id: 'bury', label: 'Seppellisci', icon: <EyeOff />, separatorBefore: true, onSelect: () => cardAction('bury') },
+          { id: 'suspend', label: 'Sospendi', icon: <Pause />, onSelect: () => cardAction('suspend') },
+        ]
+      : []),
+    { id: 'decks', label: 'Cambia mazzo', icon: <Layers />, separatorBefore: !!card, onSelect: changeDeck },
+  ];
+
+  const reconnecting = !connected ? (
+    <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+      <Spinner /> Riconnessione…
+    </p>
+  ) : null;
 
   return (
     <div className="flex h-full flex-col">
       <HeaderBar
         title="Telecomando"
-        subtitle={screen ? deckLabel : undefined}
+        subtitle={study ? deckLabel : screen?.view === 'decks' ? 'Scegli il mazzo' : undefined}
         leftContent={
           <Button variant="ghost" size="sm" icon={<ChevronLeft />} onClick={() => navigate({ name: 'decks' })} className="-ml-1.5 pl-1">
-            Mazzi
+            Esci
           </Button>
         }
         rightContent={
-          screen && !screen.done ? <QueueCounts counts={screen.counts} current={screen.queue ?? undefined} className="mr-1" /> : null
+          study ? (
+            <>
+              {card?.counts ? <QueueCounts counts={card.counts} current={card.queue ?? undefined} className="mr-1" /> : null}
+              {card && card.flag > 0 ? (
+                <span
+                  role="img"
+                  aria-label={`Flag ${flagLabel(card.flag).toLowerCase()}`}
+                  className="mx-1 size-2.5 rounded-full"
+                  style={{ backgroundColor: flagColor(card.flag) }}
+                />
+              ) : null}
+              <Menu
+                items={menuItems}
+                trigger={
+                  <IconButton label="Azioni" disabled={locked}>
+                    <MoreHorizontal />
+                  </IconButton>
+                }
+              />
+            </>
+          ) : null
         }
       />
 
@@ -111,23 +167,42 @@ export function RemoteScreen() {
         <main className="flex flex-1 items-center justify-center p-6">
           <EmptyHint
             icon={<Monitor />}
-            title="Nessuno studio aperto"
-            description="Apri un mazzo sul computer o sull’iPad, con lo stesso account: il telefono lo comanda da solo."
-            action={!connected ? <span className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner /> Riconnessione…</span> : null}
+            title="Nessuno schermo collegato"
+            description="Apri Anki Studio sul computer o sull’iPad, con lo stesso account: il telefono lo trova da solo."
+            action={reconnecting}
+          />
+        </main>
+      ) : screen.view === 'decks' ? (
+        <RemoteDeckPicker locked={locked} reconnecting={reconnecting} onOpen={(deck) => press({ action: 'open_deck', deck_id: deck.id })} />
+      ) : screen.view === 'other' ? (
+        <main className="flex flex-1 items-center justify-center p-6">
+          <EmptyHint
+            icon={<Monitor />}
+            title="Sul computer è aperta un’altra schermata"
+            description="Torna all’elenco dei mazzi sul computer per sceglierne uno da qui."
+            action={reconnecting}
           />
         </main>
       ) : (
         <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
-          {!connected ? (
-            <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-              <Spinner /> Riconnessione…
-            </p>
+          {reconnecting}
+          {screen.audio_blocked ? (
+            <Banner variant="warning" icon={<VolumeOff />}>
+              Il browser del computer tiene l’audio spento finché non fai un clic sulla sua pagina: basta una volta.
+            </Banner>
           ) : null}
 
-          {screen.done || screen.card_id === null ? (
-            <div className="flex flex-1 animate-fade-in flex-col items-center justify-center gap-3 text-center">
+          {screen.done ? (
+            <div className="flex flex-1 animate-fade-in flex-col items-center justify-center gap-4 text-center">
               <CircleCheck className="size-10 text-muted-foreground" strokeWidth={1.5} />
               <p className="text-base font-semibold">Per oggi hai finito{deckLabel ? ` con ${deckLabel}` : ''}</p>
+              <Button size="lg" icon={<Layers />} disabled={locked} onClick={changeDeck} className="h-12 px-5 text-base">
+                Cambia mazzo
+              </Button>
+            </div>
+          ) : screen.card_id === null ? (
+            <div className="flex flex-1 items-center justify-center text-muted-foreground">
+              <Spinner />
             </div>
           ) : !screen.revealed ? (
             <button
@@ -192,6 +267,70 @@ export function RemoteScreen() {
           </div>
         </main>
       )}
+
+      <FlagModal
+        isOpen={flagging && !!card}
+        current={card?.flag ?? 0}
+        onClose={() => setFlagging(false)}
+        onSelect={(flag) => {
+          setFlagging(false);
+          if (card) press({ action: 'flag', flag, card_id: card.card_id });
+        }}
+      />
     </div>
+  );
+}
+
+
+/**
+ * L'elenco dei mazzi quando sul computer c'è la schermata dei mazzi: il telefono lo legge
+ * dall'API (la collezione è la stessa) e il tocco apre il mazzo sul computer.
+ */
+function RemoteDeckPicker({
+  locked,
+  reconnecting,
+  onOpen,
+}: {
+  locked: boolean;
+  reconnecting: ReactNode;
+  onOpen: (deck: DeckNode) => void;
+}) {
+  const [decks, setDecks] = useState<DeckNode[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .decks()
+      .then((d) => {
+        if (!cancelled) setDecks(d);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Mazzi non disponibili');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
+        {reconnecting}
+        <p className="px-1 text-xs text-muted-foreground">Tocca un mazzo per studiarlo sul computer.</p>
+        {error ? <Banner variant="error">{error}</Banner> : null}
+        {decks === null ? (
+          error ? null : (
+            <div className="flex justify-center p-8 text-muted-foreground">
+              <Spinner />
+            </div>
+          )
+        ) : decks.length === 0 ? (
+          <EmptyHint icon={<Layers />} title="Nessun mazzo" />
+        ) : (
+          <DeckList decks={decks} disabled={locked} onOpen={onOpen} />
+        )}
+      </div>
+    </main>
   );
 }

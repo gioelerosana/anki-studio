@@ -76,11 +76,11 @@ const apiProxy: ProxyOptions = {
   changeOrigin: true,
   ws: true,
   // Il backend accetta un WebSocket solo dalla propria origine (anti-CSRF, app/security.py).
-  // Dietro questo proxy l'origine della pagina (Vite, o tailscale serve) non è quella
-  // dell'API, e non tutti i browser mandano Sec-Fetch-Site sui WebSocket: solo in sviluppo,
-  // il proxy si presenta con l'origine dell'API.
+  // Dietro questo proxy l'origine della pagina (Vite, o tailscale serve in https) non è
+  // quella dell'API, e non tutti i browser mandano Sec-Fetch-Site sui WebSocket. Solo in
+  // sviluppo il proxy toglie l'Origin: senza, il backend tratta la richiesta come non-browser.
   configure: (proxy) => {
-    proxy.on('proxyReqWs', (proxyReq) => proxyReq.setHeader('origin', new URL(apiTarget).origin));
+    proxy.on('proxyReqWs', (proxyReq) => proxyReq.removeHeader('origin'));
   },
 };
 

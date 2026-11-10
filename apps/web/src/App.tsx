@@ -3,7 +3,7 @@
  * scelte dall'hash (app/route.ts): mazzi, studio, aggiungi, impostazioni, telecomando.
  */
 import { AuthGate } from './app/auth';
-import { useRoute } from './app/route';
+import { useRoute, type Route } from './app/route';
 import { ToastProvider } from './app/toasts';
 import { AddScreen } from './screens/AddScreen';
 import { DecksScreen } from './screens/DecksScreen';
@@ -11,6 +11,7 @@ import { RemoteScreen } from './screens/RemoteScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { StudyScreen } from './screens/StudyScreen';
 import { useSettings } from './settings';
+import { RemoteScreenProvider } from './remote/RemoteScreenProvider';
 import { SyncProvider } from './sync/SyncProvider';
 
 export function App() {
@@ -38,6 +39,15 @@ export function App() {
 function Connected() {
   const route = useRoute();
 
+  return (
+    // Il telecomando vale in ogni schermata: sui mazzi il telefono ne apre uno, nello studio comanda la carta.
+    <RemoteScreenProvider route={route}>
+      <Screen route={route} />
+    </RemoteScreenProvider>
+  );
+}
+
+function Screen({ route }: { route: Route }) {
   switch (route.name) {
     case 'study':
       return <StudyScreen key={route.deckId} deckId={route.deckId} />;

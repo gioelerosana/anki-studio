@@ -25,21 +25,22 @@ import {
   Smartphone,
   Undo2,
   Volume2,
+  VolumeOff,
 } from 'lucide-react';
 import { Banner, Button, HeaderBar, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import { findDeck } from '../api/decks';
-import type { Rating, RemoteCommand, RemoteScreenState, StudyState, TodayStats } from '../api/types';
+import type { Rating, RemoteCommand, StudyState, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { useToast } from '../app/toasts';
 import { QueueCounts } from '../components/QueueCounts';
 import { EditNoteModal } from '../notes/EditNoteModal';
-import { useRemoteScreen } from '../remote/useRemoteScreen';
+import { useRemoteStudy, type RemoteStudyState } from '../remote/RemoteScreenProvider';
 import { useSettings } from '../settings';
 import { CardView } from '../study/CardView';
 import { FlagModal } from '../study/FlagModal';
-import { playAv, primeAudio, stopAv } from '../study/audio';
+import { playAv, primeAudio, stopAv, useAudioUnlocked } from '../study/audio';
 import { flagColor, flagLabel } from '../study/flags';
 import { useCardTimer } from '../study/useCardTimer';
 import { useSync } from '../sync/SyncProvider';
@@ -255,8 +256,14 @@ export function StudyScreen({ deckId }: { deckId: number }) {
 
   // Telecomando: lo stato che vede il telefono e i suoi tasti, eseguiti come quelli della tastiera.
   const hasAudio = !!card && card.question_av.length + card.answer_av.length > 0;
+  const audioUnlocked = useAudioUnlocked();
+  // Appena il clic sblocca l'audio, la carta suona come avrebbe fatto all'arrivo.
+  useEffect(() => {
+    const k = keys.current;
+    if (audioUnlocked && k.card?.autoplay) playAv(k.revealed ? k.card.answer_av : k.card.question_av);
+  }, [audioUnlocked]);
   const canUndo = !!state?.undo_label || answeredInSession > 0;
-  const remoteState = useMemo<RemoteScreenState | null>(
+  const remoteState = useMemo<RemoteStudyState | null>(
     () =>
       state
         ? {
@@ -269,35 +276,26 @@ export function StudyScreen({ deckId }: { deckId: number }) {
             counts: state.counts,
             button_labels: (card?.button_labels ?? []).map(cleanLabel),
             has_audio: hasAudio,
+            audio_blocked: hasAudio && !audioUnlocked,
+            flag: card?.flag ?? 0,
             can_undo: canUndo,
             busy,
           }
         : null,
-    [busy, canUndo, card, deckId, deckName, hasAudio, revealed, state],
+    [audioUnlocked, busy, canUndo, card, deckId, deckName, hasAudio, revealed, state],
   );
-  const onRemoteCommand = useCallback(
-    (command: RemoteCommand) => {
-      const k = keys.current;
-      if (document.querySelector('[role="dialog"], [role="menu"]')) {
-        toast('info', 'Telecomando in pausa: chiudi la finestra aperta');
-        return;
-      }
-      const sameCard = !!k.card && command.card_id === k.card.card_id;
-      if (command.action === 'reveal' && sameCard && !k.revealed) k.reveal();
-      else if (command.action === 'answer' && sameCard && k.revealed && command.rating) void k.answer(command.rating);
-      else if (command.action === 'undo') void k.undo();
-      else if (command.action === 'replay') k.replay();
-    },
-    [toast],
-  );
-  const { remotes } = useRemoteScreen(remoteState, onRemoteCommand);
-  const hadRemote = useRef(false);
-  useEffect(() => {
-    if (remotes > 0 && !hadRemote.current) {
-      hadRemote.current = true;
-      toast('success', 'Telecomando collegato');
-    }
-  }, [remotes, toast]);
+  // finestre aperte, "apri mazzo" e "torna ai mazzi" li gestisce RemoteScreenProvider
+  const onRemoteCommand = useCallback((command: RemoteCommand) => {
+    const k = keys.current;
+    const sameCard = !!k.card && command.card_id === k.card.card_id;
+    if (command.action === 'reveal' && sameCard && !k.revealed) k.reveal();
+    else if (command.action === 'answer' && sameCard && k.revealed && command.rating) void k.answer(command.rating);
+    else if (command.action === 'undo') void k.undo();
+    else if (command.action === 'replay') k.replay();
+    else if ((command.action === 'bury' || command.action === 'suspend') && sameCard) void k.cardAction(command.action);
+    else if (command.action === 'flag' && sameCard && command.flag != null) void k.setFlag(command.flag);
+  }, []);
+  const remotes = useRemoteStudy(remoteState, onRemoteCommand);
 
   const menuItems: MenuItem[] = card
     ? [
@@ -371,6 +369,15 @@ export function StudyScreen({ deckId }: { deckId: number }) {
         <>
           <div ref={scrollRef} className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
             {/* key: ogni carta e ogni lato entrano con il fade, e lo Shadow DOM riparte pulito. */}
+            {hasAudio && !audioUnlocked ? (
+              // Mazzo aperto dal telecomando senza un clic su questa pagina: il browser tace.
+              // Qualunque clic sblocca (study/audio.ts); il pulsante dice dove farlo.
+              <div className="sticky top-0 z-10 flex justify-center p-2">
+                <Button variant="outline" size="sm" icon={<VolumeOff />} onClick={primeAudio} className="bg-background shadow-control">
+                  Clicca per attivare l’audio
+                </Button>
+              </div>
+            ) : null}
             <CardView
               key={`${card.card_id}-${revealed ? 'a' : 'q'}`}
               html={revealed ? card.answer_html : card.question_html}
