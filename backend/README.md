@@ -331,10 +331,12 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
   Il server lo limita al massimo impostato nel preset del mazzo, come fa Anki desktop.
 - Un **409** su `answer` significa che la coda è cambiata, per esempio dopo una sync: basta ricaricare `GET /study`.
 - **Telecomando** (`app/remote.py`): WebSocket con il cookie di sessione e l'origine della PWA
-  (un'altra origine viene rifiutata all'handshake). La schermata di studio si collega come
-  `screen` e manda `{"type":"state","state":RemoteScreenState,"claim":bool}`; il telefono come
+  (un'altra origine viene rifiutata all'handshake). La PWA aperta (in ogni schermata tranne
+  il telecomando stesso) si collega come `screen` e manda `{"type":"state","state":RemoteScreenState,"claim":bool}`; il telefono come
   `remote` riceve `{"type":"state","screen":…|null}` e manda `{"type":"command","command":RemoteCommand}`
-  (`reveal`, `answer` con `rating`, `undo`, `replay`). Il server inoltra soltanto, in memoria: lo
+  (`reveal`, `answer` con `rating`, `undo`, `replay`, `bury`, `suspend`, `flag` con `flag`,
+  `open_deck` con `deck_id`, `close`). `view` dice cosa mostra lo schermo: `decks` (il telefono
+  può aprire un mazzo), `study`, `other` (aggiungi, impostazioni: il telefono non la cambia). Il server inoltra soltanto, in memoria: lo
   studio vero resta nella schermata, che esegue il comando solo se `card_id` è ancora la carta
   mostrata. Con più schermate aperte comanda quella in primo piano per ultima (`claim`).
   Niente abbinamento: stesso account, stessa collezione.

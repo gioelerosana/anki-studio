@@ -151,7 +151,8 @@ async def remote_socket(
 
     - schermo → server: `{"type": "state", "state": RemoteScreenState, "claim": bool}`
       (`claim`: la schermata è in primo piano e diventa quella comandata);
-    - telefono → server: `{"type": "command", "command": RemoteCommand}`;
+    - telefono → server: `{"type": "command", "command": RemoteCommand}` (reveal, answer,
+      undo, replay, bury, suspend, flag);
     - server → telefono: `{"type": "state", "screen": RemoteScreenState | null}`;
     - server → schermo: `{"type": "command", "command": …}` e `{"type": "remotes", "count": n}`.
     """

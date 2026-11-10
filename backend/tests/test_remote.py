@@ -42,12 +42,24 @@ def test_remote_controls_screen(client):
             phone.send_json({"type": "command", "command": {"action": "reveal", "card_id": 42}})
             assert screen.receive_json() == {
                 "type": "command",
-                "command": {"action": "reveal", "rating": None, "card_id": 42},
+                "command": {
+                    "action": "reveal",
+                    "rating": None,
+                    "flag": None,
+                    "card_id": 42,
+                    "deck_id": None,
+                },
             }
             phone.send_json(
                 {"type": "command", "command": {"action": "answer", "rating": 3, "card_id": 42}}
             )
             assert screen.receive_json()["command"]["rating"] == 3
+            phone.send_json({"type": "command", "command": {"action": "suspend", "card_id": 42}})
+            assert screen.receive_json()["command"]["action"] == "suspend"
+            phone.send_json(
+                {"type": "command", "command": {"action": "flag", "flag": 2, "card_id": 42}}
+            )
+            assert screen.receive_json()["command"]["flag"] == 2
 
         # il telefono se n'è andato
         assert screen.receive_json() == {"type": "remotes", "count": 0}
@@ -86,7 +98,7 @@ def test_last_focused_screen_wins(client):
 def test_invalid_message_closes(client):
     with client.websocket_connect(REMOTE) as phone:
         phone.receive_json()
-        phone.send_json({"type": "command", "command": {"action": "answer", "rating": 9}})
+        phone.send_json({"type": "command", "command": {"action": "flag", "flag": 8}})
         with pytest.raises(WebSocketDisconnect) as exc:
             phone.receive_json()
         assert exc.value.code == 4400
@@ -131,3 +143,24 @@ def test_cookie_session_checks_origin(client):
             pass
     with client.websocket_connect(REMOTE, headers={"Origin": "http://testserver"}) as ok:
         assert ok.receive_json()["type"] == "state"
+
+
+def test_pick_deck_from_phone(client):
+    """Lo schermo sull'elenco dei mazzi: il telefono ne apre uno."""
+    with client.websocket_connect(SCREEN) as screen, client.websocket_connect(REMOTE) as phone:
+        screen.receive_json()
+        phone.receive_json()
+        screen.receive_json()  # remotes: 1
+        screen.send_json({"type": "state", "state": {"view": "decks"}, "claim": True})
+        seen = phone.receive_json()["screen"]
+        assert seen["view"] == "decks" and seen["deck_id"] is None and seen["counts"] is None
+        phone.send_json({"type": "command", "command": {"action": "open_deck", "deck_id": 7}})
+        assert screen.receive_json()["command"] == {
+            "action": "open_deck",
+            "rating": None,
+            "flag": None,
+            "card_id": None,
+            "deck_id": 7,
+        }
+        phone.send_json({"type": "command", "command": {"action": "close"}})
+        assert screen.receive_json()["command"]["action"] == "close"
