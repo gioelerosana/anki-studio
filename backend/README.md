@@ -66,6 +66,10 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | `ANKI_OIDC_ALLOWED_USERS` / `_GROUPS` | vuoti | Seconda barriera dopo le policy di Authentik: `preferred_username`/email o gruppi ammessi (virgole). Vuoti = decide Authentik |
 | `ANKI_SESSION_DAYS` | `30` | Durata della sessione della PWA; scaduta, la PWA rifà il login da sola |
 | `ANKI_DEV_LOGIN` | `false` | Solo sviluppo: login senza Authentik. Rifiutato insieme ad `ANKI_WEB_DIR` |
+| `ANKI_MCP_ENABLED` | `true` | Server MCP su `/mcp` (e metadati OAuth). `false` = niente `/mcp` né `.well-known` (404) |
+| `ANKI_MCP_OIDC_ISSUER` | — | Issuer del SECONDO provider Authentik, quello per l'app Claude, es. `https://auth.jshep.xyz/application/o/anki-studio-mcp/` (solo `https`). Vuoto = niente OAuth su `/mcp`, restano i token Bearer |
+| `ANKI_MCP_OIDC_CLIENT_ID` | — | Client ID di quel provider: è il valore atteso nell'`aud` dei JWT (non l'URL della risorsa). Il backend **non** ha il client secret: lo usa Claude |
+| `ANKI_MCP_OAUTH_REVIEW` | `true` | Le note create da Claude via OAuth nascono bozze da approvare nella PWA |
 | `ANKI_API_TOKEN` / `_FILE` | — | Facoltativo, per script e test: `Authorization: Bearer` (min. 16 caratteri). È il token "amministratore": può tutto. La PWA non lo usa. I token per gli agenti si creano dalla PWA o da `/api/tokens` (vedi "Agenti, bozze e token") |
 | `ANKI_WEB_DIR` | vuoto (`/srv/web` nel container) | Build della PWA da servire sulla stessa origine; vuoto = solo API |
 | `ANKI_STUDIO_VERSION` / `_REVISION` | `dev` / vuoto | Versione e commit, li imposta il Dockerfile; li riporta `/api/health` |
@@ -224,8 +228,10 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
   `Authorization: Bearer <token>`. Dopo `ANKI_TOKEN_MAX_FAILURES` token sbagliati (o login OIDC
   con `state`/codice non validi) nella finestra, quell'IP riceve **429** con `Retry-After` per
   tutte le richieste, anche con credenziali giuste (altrimenti chi indovina se ne accorgerebbe).
+- **`/mcp`** (server MCP): non usa cookie e il cookie di sessione **non** vale come credenziale (niente CSRF,
+  niente autorità implicita); i token nella query string si ignorano. Vedi "Server MCP" qui sotto.
 - **Login AnkiWeb**: al massimo `ANKI_LOGIN_MAX_FAILURES` falliti nella finestra, per IP e in totale.
-- **Header**: su `/api/*` `X-Content-Type-Options`, `Referrer-Policy: no-referrer`,
+- **Header**: su `/api/*`, `/mcp` e `/.well-known/*` `X-Content-Type-Options`, `Referrer-Policy: no-referrer`,
   `X-Frame-Options: DENY`, `Cross-Origin-Resource-Policy`, `Cache-Control: no-store` (i media
   hanno la loro cache), una CSP restrittiva e, sui media, `sandbox`: un `.svg` o `.html` della
   collezione aperto direttamente non esegue script sulla nostra origine. `Strict-Transport-Security`
@@ -241,7 +247,7 @@ fonde le modifiche o, se servisse, chiede di scegliere (409) senza toccare nient
   rate limit. Nello stack il container non pubblica porte: ci arriva solo Traefik, sulla sua
   rete edge dedicata.
 - **Body**: al massimo 50 MB per richiesta (413 oltre), anche prima del controllo della sessione
-  (era `client_max_body_size` di nginx).
+  (era `client_max_body_size` di nginx). Su `/mcp` il tetto del trasporto è 15 MB (serve a `add_media`).
 - **PWA**: sui file statici `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
   `Cross-Origin-Resource-Policy` e, su `index.html`, una CSP che ammette solo gli script dell'app
   (`script-src 'self'` più l'hash dello script inline di `index.html`, calcolato all'avvio).
@@ -300,6 +306,7 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET | `/api/search/notes?q=&limit=&offset=` | Ricerca con la sintassi di Anki (400 se non valida) |
 | GET | `/api/tags` | Tutti i tag |
 | GET | `/api/media/{file}` | Immagini e audio delle carte (con il cookie di sessione) |
+| POST | `/api/media` | `{filename, data_base64}` → `{filename}` (201): carica un'immagine, un audio o un mp4/webm nei media (max 10 MB decodificati, 413 oltre). Estensione e contenuto devono coincidere, il nome si sanifica e Anki può cambiarlo: usa quello restituito nei campi. Token `write` e sessione |
 | GET | `/api/sync` | Stato della sync (vedi sopra) |
 | POST | `/api/sync/login` · `/logout` | Collega o scollega AnkiWeb (429 dopo troppi tentativi) |
 | POST | `/api/sync` | Sync normale (409 = serve la sync completa) |
@@ -354,7 +361,7 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
 ## Agenti, bozze e token
 
 Contratto e motivazioni in [`docs/PIANO-HUB.md`](../docs/PIANO-HUB.md); la logica sta in `app/hub.py`
-(senza FastAPI, la riuserà il server MCP) e le rotte in `routers/hub.py`, `routers/notes.py`,
+(senza FastAPI, la usa anche il server MCP) e le rotte in `routers/hub.py`, `routers/notes.py`,
 `routers/tokens.py`.
 
 **Token.** `ask_` + 32 byte casuali. Sul disco (`data/tokens.json`, 0600, scrittura atomica) resta
@@ -369,9 +376,9 @@ vietata ai token con scope finché non la si elenca lì):
 | | sessione e `ANKI_API_TOKEN` | token `write` | token `read` |
 |---|---|---|---|
 | `GET` decks, notetypes, search/notes, tags, notes/{id}, cards/{id}/preview, hub/summary, hub/drafts, sync | sì | sì | sì |
-| `POST` hub/notes/batch, hub/decks, sync | sì | sì | 403 |
+| `POST` hub/notes/batch, hub/decks, sync, media | sì | sì | 403 |
 | `PATCH` notes/{id} | sì | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 |
-| approva/scarta bozze, move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, media, `auth/me`, telecomando | sì | 403 | 403 |
+| approva/scarta bozze, move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me`, telecomando | sì | 403 | 403 |
 
 Un token con scope risponde 403 con "Questo token non può fare questa operazione".
 
@@ -409,6 +416,99 @@ curl -s -X POST localhost:8000/api/hub/notes/batch -H "Authorization: Bearer $TO
     {"deck":"Lingue::Spagnolo","notetype":"Basic","fields":{"Front":"saltar","Back":"saltare"},"external_id":"v-saltar"}]}'
 ```
 
+## Server MCP (`/mcp`)
+
+Un server MCP **nello stesso processo** dell'API (streamable HTTP, `app/mcp_server.py`): la collezione
+resta aperta una volta sola, sotto lo stesso `RLock`. Gli strumenti chiamano le funzioni delle rotte
+REST (`app/hub.py` e `routers/*`): stesse regole, stesse bozze, stessi errori, e dopo ogni scrittura
+parte `request_soon()` (sync con AnkiWeb dopo `ANKI_SYNC_AFTER_WRITE_SECONDS`). Piano e motivazioni in
+[`docs/PIANO-HUB.md`](../docs/PIANO-HUB.md).
+
+**Strumenti** (descrizioni in italiano, con `title` e annotazioni `readOnlyHint`/`destructiveHint`/`idempotentHint`):
+
+| Strumento | Cosa fa | Serve |
+|---|---|---|
+| `list_decks` | Albero dei mazzi con id, nome completo e conteggi | `read` |
+| `list_notetypes` | Tipi di nota con i nomi esatti dei campi | `read` |
+| `search_notes` | Ricerca con la sintassi di Anki (`query`, `limit` ≤ 100, `offset`) | `read` |
+| `get_note` | Una nota intera (campi, tag, mazzo, carte, `draft`) | `read` |
+| `add_notes` | Fino a 100 note: `dry_run`, `create_missing_decks`, `draft`, `external_id` per nota; esito per nota | `write` |
+| `update_note` | Campi e tag di una nota **creata dallo stesso accesso** (tag `agent::<nome>`) | `write` |
+| `create_deck` | Crea un mazzo (idempotente) | `write` |
+| `sync_now` | Sync normale con AnkiWeb | `write` |
+| `sync_status` | Stato della sync | `read` |
+| `add_media` | Immagine, audio o video breve in base64 (`filename`, `data_base64`, max 10 MB decodificati) | `write` |
+
+**Non esistono** strumenti per cancellare, approvare o scartare bozze, sync completa o tipi di nota:
+sono gesti dell'utente nella PWA. Il testo che arriva dalla collezione (`search_notes`, `get_note`) è
+dato non fidato e le descrizioni lo dicono. Hanno `destructiveHint` solo `update_note` (sovrascrive i
+campi che passi); `add_notes` no, anche se con lo stesso `external_id` aggiorna la *propria* nota
+precedente.
+
+**Permessi.** Ogni strumento corrisponde a una rotta REST e passa da `security.token_may` (una sola
+matrice): un token `read` non scrive niente, `review` non si aggira (`draft: false` non vale),
+`update_note` tocca solo le note col proprio `agent::<nome>`, i tag `agent::`, `ext::`, `hub::` sono
+riservati. Un accesso senza identità (non passato da `/mcp`) è rifiutato. L'elenco degli strumenti è lo
+stesso per tutti: uno strumento non permesso risponde con un errore che spiega cosa serve.
+
+**Autenticazione** (`app/mcp_auth.py`), due modi:
+
+1. **Bearer `ask_…`** (Hermes, Claude Code, script) e il vecchio `ANKI_API_TOKEN`: stessi token, scope e
+   limite ai tentativi sbagliati (429) della REST.
+2. **OAuth con Authentik** per l'app Claude, con un secondo provider (client confidenziale, redirect
+   `https://claude.ai/api/mcp/auth_callback`, PKCE S256, `offline_access`, chiave di firma). Il backend
+   riceve il JWT e ne **verifica la firma** con il JWKS dell'issuer (URL dal documento di discovery, in
+   cache 1 h; un `kid` sconosciuto ricarica il JWKS una volta, al massimo una al minuto): solo `RS256` ed
+   `ES256` (mai `none`, mai `HS*`), `iss`, `aud` (= `ANKI_MCP_OIDC_CLIENT_ID`), `exp`, `nbf`/`iat` con 60 s
+   di tolleranza, `typ` se presente (`JWT`, `at+jwt`). L'utente è `preferred_username` (il `sub` di
+   Authentik è opaco) o `email`; `ANKI_OIDC_ALLOWED_USERS/_GROUPS` si applicano come nel login della PWA.
+   Se le liste sono impostate e nel JWT mancano `preferred_username`, `email` e `groups` la risposta è un
+   **403** che lo dice (non si chiama lo userinfo endpoint: sarebbe una chiamata di rete in più sul
+   percorso della richiesta; aggiungi gli scope `profile`/`email` al provider). Il risultato è un'identità
+   `oauth`: scope `write`, `review` da `ANKI_MCP_OAUTH_REVIEW`, agente `claude` (tag `agent::claude`).
+   I JWT non validi contano come tentativi sbagliati; se Authentik non è raggiungibile e non c'è cache la
+   risposta è **503** con `Retry-After`, non un 401.
+
+Risposte: senza credenziali **401** con `WWW-Authenticate: Bearer resource_metadata="<ANKI_PUBLIC_URL>/.well-known/oauth-protected-resource/mcp", scope="openid profile email offline_access"`
+(più `error="invalid_token"` se il token c'era ma è sbagliato; senza OAuth configurato solo `Bearer`).
+Mai redirect, né con né senza slash finale. `GET /.well-known/oauth-protected-resource[/mcp]` (pubblico,
+**404** senza OAuth) restituisce `resource = <ANKI_PUBLIC_URL>/mcp` (esattamente l'URL da dare a Claude),
+`authorization_servers = [ANKI_MCP_OIDC_ISSUER]`, `scopes_supported`, `bearer_methods_supported: ["header"]`.
+`/mcp` e `/.well-known/*` non passano mai dal fallback della PWA (un 200 HTML farebbe ignorare a Claude il
+challenge). La protezione DNS-rebinding dell'SDK ammette l'host di `ANKI_PUBLIC_URL` e `localhost`
+(421 per gli altri; spenta se `ANKI_PUBLIC_URL` manca, in sviluppo: ogni richiesta ha comunque bisogno di un Bearer).
+
+**Collegarlo.** Hermes / Claude Code / script: URL `https://…/mcp` e header `Authorization: Bearer ask_…`.
+App Claude: connettore personalizzato con URL `<ANKI_PUBLIC_URL>/mcp` e, se serve, ID e secret del client
+del provider Authentik (niente Dynamic Client Registration).
+
+```bash
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream')
+curl -s localhost:8000/mcp "${H[@]}" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -sN localhost:8000/mcp "${H[@]}" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_decks","arguments":{}}}'
+```
+
+**Errori comuni**
+
+| Cosa vedi | Perché |
+|---|---|
+| `401` + `invalid_token` | Token sbagliato, revocato, JWT scaduto, `aud`/`iss` diversi, firma non valida o `kid` che il provider non pubblica |
+| `403` "Utente non ammesso" / "nel token mancano…" | `ANKI_OIDC_ALLOWED_USERS/_GROUPS` e claim del JWT (vedi sopra) |
+| `429` | Troppi token sbagliati da quell'IP (stesso limite della REST) |
+| `503` Authentik non raggiungibile | Discovery o JWKS non scaricabili e nessuna cache |
+| `421` / `403` Invalid Host / Origin | Host o `Origin` fuori da `ANKI_PUBLIC_URL`: controlla che Traefik non riscriva l'host |
+| `413` | Body oltre 15 MB (50 MB per il resto del backend) |
+| Errore dello strumento "occupata… riprova" | Collezione occupata (di solito una sync): equivale al 503 della REST |
+| Errore dello strumento "scope «read»…" | L'accesso è `read`: serve `write` (Impostazioni → Agenti) |
+
+**Note di implementazione.** SDK `mcp` **2.x** (`>=2.3,<3`): la linea stabile (Production/Stable dalla 2.0,
+Python ≥ 3.10; il nostro Docker usa 3.13). `FastMCP` è `MCPServer` e il lifespan dell'app che la ospita
+entra in `session_manager.run()` (lo fa `app/main.py`). Il server serve sia il protocollo 2025-11-25
+(con `initialize`) sia il 2026-07-28 (senza handshake): lo decide l'SDK dall'header
+`MCP-Protocol-Version`. È in modalità `stateless_http`: niente sessioni, quindi un riavvio dell'immagine
+non lascia i client con un `Mcp-Session-Id` che dà 404, e l'identità si legge sempre dalla richiesta
+corrente. Gli strumenti sono funzioni sincrone che l'SDK esegue in un thread.
+
 ## Dipendenze
 
 `requirements.lock` fissa versioni e hash di tutte le dipendenze per l'immagine (e per la CI).
@@ -417,6 +517,10 @@ Dopo un cambio in `pyproject.toml`:
 ```bash
 uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.13 -o requirements.lock
 ```
+
+Le dipendenze del server MCP sono `mcp>=2.3,<3` (tetto alla 3: un salto maggiore si prova prima) e
+`PyJWT[crypto]` (firma dei JWT di Authentik); l'SDK porta con sé `httpx2`, `cryptography`, `jsonschema`
+e `sse-starlette`.
 
 ## Test
 
@@ -428,6 +532,14 @@ uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.1
 limite al body, token da file e versione in `/api/health`. `tests/test_auth.py` copre il login OIDC
 con un provider finto: PKCE, `state`, controlli sull'ID token, utenti e gruppi ammessi, CSRF,
 cookie manomessi, logout, login di sviluppo.
+
+`tests/test_mcp.py` copre il server MCP (elenco e annotazioni degli strumenti, permessi per scope, bozze
+e `review` non aggirabili, `update_note` solo sulle note proprie, errori chiari, collezione occupata, sync
+dopo la scrittura, un client dell'SDK su un uvicorn vero con entrambe le versioni del protocollo e la
+risposta in streaming); `tests/test_mcp_auth.py` l'accesso: 401 e metadati esatti, JWT con una coppia di
+chiavi RSA/EC generata nei test e un JWKS finto (valido, scaduto, `iss`/`aud` sbagliati, firma sbagliata,
+`alg=none`, HS256 firmato con la chiave pubblica, rotazione dei `kid`, claim e utenti ammessi), rate limit,
+cookie che non valgono, Host ammessi, niente redirect; `tests/test_media.py` i media. Nessun test fa rete.
 
 `tests/test_hub.py` copre batch, idempotenza, bozze, anteprima, spostamenti e tag; `test_tokens.py` i token
 (hash a riposo, rate limit, revoca); `test_permissions.py` la matrice dei permessi; `test_sync_after_write.py`

@@ -128,9 +128,45 @@ per l'app Claude.
 - [ ] **2. PWA: Libreria, Inbox, Agenti** — contro il contratto sopra.
 - [ ] **3. Deploy e Authentik** — blueprint del secondo provider, Traefik per `/mcp` e
       `.well-known`, variabili, guide di collegamento per Claude e Hermes.
-- [ ] **4. Server MCP + OAuth** — `app/mcp_server.py`, verifica JWT, discovery, test.
-- [ ] **5. Media** — `POST /api/media` e `add_media`.
+- [x] **4. Server MCP + OAuth** — `app/mcp_server.py`, `app/mcp_auth.py`, verifica JWT, discovery, test.
+- [x] **5. Media** — `POST /api/media` e `add_media`.
 - [ ] **6. Prova vera** — Claude e Hermes su `/mcp`, una sync vera con AnkiWeb, altro dispositivo.
+
+### Scelte delle fasi 4 e 5
+
+- **SDK**: `mcp>=2.3,<3` (2.3.0). La 2.x è la linea stabile (Production/Stable dalla 2.0, Python ≥ 3.10,
+  provata con il 3.13 dell'immagine); `FastMCP` → `MCPServer`, e `app/main.py` entra in
+  `session_manager.run()` nel lifespan (un'app montata non esegue il suo). Tetto alla 3. PyJWT[crypto] è
+  dichiarata a parte (la porta già `mcp`). `requirements.lock` rigenerato: nessuna versione esistente
+  è cambiata, solo aggiunte.
+- **Modalità**: `stateless_http=True` (niente sessioni: un riavvio non lascia client con un
+  `Mcp-Session-Id` che dà 404), risposte SSE di default. Il server parla sia il protocollo 2025-11-25
+  sia il 2026-07-28 (lo sceglie l'SDK). `/mcp` e `/mcp/` sono due rotte esplicite (un `Mount` darebbe
+  un 307) e `app/web.py` esclude `/mcp` e tutto `/.well-known/` dal fallback della PWA.
+- **Auth fatta a mano**, non con il `TokenVerifier` dell'SDK: servono gli stessi scope, lo stesso
+  rate limit e il challenge esatto richiesti da Claude. L'identità (`Identity`, kind `oauth`) arriva agli
+  strumenti dalla richiesta HTTP corrente (`scope["state"]`), mai da una sessione.
+- **Chi è l'utente OAuth** (il `sub` di Authentik è opaco): `preferred_username`, poi `email`; le liste
+  `ANKI_OIDC_ALLOWED_USERS/_GROUPS` usano la stessa funzione del login della PWA (`oidc.authorize_claims`).
+  Se le liste sono impostate e i claim mancano → 403 con un messaggio chiaro; **niente userinfo endpoint**
+  (una chiamata di rete in più nel percorso della richiesta: basta aggiungere `profile`/`email` al
+  provider). Senza liste decide Authentik.
+- **JWT**: solo `RS256`/`ES256` (P-256), JWKS dall'URL della discovery, che deve stare sullo stesso
+  origin dell'issuer (https, niente redirect, timeout 5 s, 1 MB al massimo); cache 1 h, un `kid` nuovo
+  ricarica una volta al massimo al minuto, dopo un errore di rete si aspettano 10 s; con una cache
+  vecchia e l'issuer giù si continua con la vecchia. Issuer irraggiungibile e nessuna cache → 503.
+  Un utente non ammesso (firma valida) non conta come tentativo sbagliato, un JWT non valido sì.
+- **Permessi**: ogni strumento chiama la stessa funzione della rotta REST e passa da `security.token_may`
+  col percorso REST equivalente (`POST /media` è stato aggiunto alla matrice, solo write).
+  `Identity.scoped` raggruppa token e OAuth; i tag riservati, `review` e `update_note` sulle sole note
+  proprie sono quindi gli stessi della REST. Un token `ask_` chiamato "claude" ha lo stesso `agent::claude`
+  dell'OAuth e quindi può modificarne le note: se è un problema, dai al token un altro nome.
+- **Annotazioni**: `destructiveHint` solo su `update_note` (sovrascrive campi); `add_notes` è non
+  distruttivo e idempotente (l'aggiornamento via `external_id` tocca solo la nota che l'agente ha creato).
+- **Media**: tetto 10 MB decodificati (il trasporto MCP ha il suo tetto a 15 MB perché il base64 pesa
+  1/3 in più), solo estensioni note e con la firma del contenuto coerente, SVG senza script. I media escono
+  già con CSP `sandbox` (`security._MEDIA_CSP`, verificato da `tests/test_media.py`): anche un SVG aperto a
+  mano non esegue niente sulla nostra origine.
 
 ## Regole per chi ci lavora
 
