@@ -393,9 +393,11 @@ function DraftHeader({ draft }: { draft: DraftNote }) {
         {draft.deck_name ? ` · ${draft.deck_name.replaceAll('::', ' › ')}` : ''} · {created}
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="outline" icon={<Bot />}>
-          {draft.agent ?? 'agente sconosciuto'}
-        </Badge>
+        {draft.agent ? (
+          <Badge variant="outline" icon={<Bot />}>
+            {draft.agent}
+          </Badge>
+        ) : null}
         {shown.map((t) => (
           <Badge key={t} variant="secondary">
             {t}
@@ -433,9 +435,11 @@ function DraftRow({
       >
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm">{title || '(senza testo)'}</span>
-          <Badge variant="outline" size="sm" icon={<Bot />} className="max-w-28 truncate">
-            {draft.agent ?? '?'}
-          </Badge>
+          {draft.agent ? (
+            <Badge variant="outline" size="sm" icon={<Bot />} className="max-w-28 truncate">
+              {draft.agent}
+            </Badge>
+          ) : null}
         </span>
         <span className="truncate text-2xs text-muted-foreground">
           {draft.deck_name ? `${draft.deck_name.replaceAll('::', ' › ')} · ` : ''}

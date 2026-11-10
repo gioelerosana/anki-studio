@@ -54,3 +54,6 @@ export function searchTerm(key: string, value: string): string {
   const escaped = value.replace(/[\\"*_]/g, (c) => `\\${c}`);
   return `"${key}:${escaped}"`;
 }
+
+/** Titolo di una riga: il campo di ordinamento arriva senza HTML ma con i `[sound:…]`. */
+export const plainTitle = (text: string) => text.replace(/\[sound:[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();

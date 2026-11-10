@@ -19,7 +19,7 @@ import { flattenDecks } from '../api/decks';
 import type { DeckNode, NoteSearchItem } from '../api/types';
 import { formatRelative, plural } from '../app/format';
 import { navigate } from '../app/route';
-import { searchTerm } from '../app/text';
+import { plainTitle, searchTerm } from '../app/text';
 import { useToast } from '../app/toasts';
 import { runEach } from '../hub/bulk';
 import { ErrorBanner, describeError } from '../hub/errors';
@@ -250,7 +250,7 @@ export function LibraryScreen() {
   const deleteTitles = useMemo(() => {
     if (action?.kind !== 'delete') return [];
     const byId = new Map(items.map((n) => [n.id, n.sort_field]));
-    return action.ids.slice(0, 3).map((id) => byId.get(id) ?? '');
+    return action.ids.slice(0, 3).map((id) => plainTitle(byId.get(id) ?? ''));
   }, [action, items]);
 
   /* ---- tastiera: «/» cerca, Esc chiude il dettaglio o la selezione (da lg: sotto lo fa il foglio) ---- */
@@ -530,7 +530,7 @@ function ItemHeader({ item }: { item: NoteSearchItem }) {
   const shown = item.tags.filter((t) => !isSystemTag(t));
   return (
     <div className="flex flex-col gap-1.5">
-      <h2 className="break-words text-base font-semibold">{item.sort_field || '(senza testo)'}</h2>
+      <h2 className="break-words text-base font-semibold">{plainTitle(item.sort_field) || '(senza testo)'}</h2>
       <p className="text-2xs text-muted-foreground">
         {item.notetype_name}
         {item.deck_name ? ` · ${item.deck_name.replaceAll('::', ' › ')}` : ''} · modificata {formatRelative(item.modified)}
@@ -576,7 +576,7 @@ function NoteRow({
           onCheckedChange={onToggle}
           // il clic sulla casella non deve arrivare anche all'area attorno, o si commuta due volte
           onClick={(e) => e.stopPropagation()}
-          aria-label={`Seleziona «${item.sort_field || 'nota senza testo'}»`}
+          aria-label={`Seleziona «${plainTitle(item.sort_field) || 'nota senza testo'}»`}
         />
       </div>
       <button
@@ -586,7 +586,7 @@ function NoteRow({
         className="flex min-h-14 min-w-0 flex-1 flex-col justify-center gap-0.5 py-2 pr-3 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm">{item.sort_field || '(senza testo)'}</span>
+          <span className="min-w-0 flex-1 truncate text-sm">{plainTitle(item.sort_field) || '(senza testo)'}</span>
           {isDraft(item) ? <Badge variant="warning" size="sm">Bozza</Badge> : null}
           {agent ? (
             <Badge variant="outline" size="sm" icon={<Bot />} className="max-w-28 truncate">
