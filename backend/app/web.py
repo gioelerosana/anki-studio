@@ -15,8 +15,8 @@ Le regole sono quelle che prima stavano in `apps/web/nginx.conf`:
 - `index.html`, `sw.js`, `manifest.webmanifest` e il resto: `no-cache`, così una versione
   nuova arriva alla prima apertura (il browser rivalida con l'ETag e riceve 304).
 - Fallback SPA: ogni altra rotta in GET restituisce `index.html`.
-- `/api/*` non passa mai di qui: una rotta API che non esiste è un 404 JSON, mai la PWA, e
-  le risposte API restano `no-store` (vedi `security.security_headers`).
+- `/api/*`, `/mcp` e `/.well-known/*` non passano mai di qui: una rotta che non esiste è un 404
+  JSON, mai la PWA, e le risposte restano `no-store` (vedi `security.security_headers`).
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
+
+from .security import is_api_path
 
 IMMUTABLE = "public, max-age=31536000, immutable"
 NO_CACHE = "no-cache"
@@ -76,8 +78,10 @@ class PWAFiles(StaticFiles):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
             route = scope["path"]
-            if route == "/api" or route.startswith("/api/"):
-                # arriva qui solo una rotta API che non esiste: 404 JSON di FastAPI
+            if is_api_path(route):
+                # arriva qui solo una rotta API, /mcp o /.well-known che non esiste (o
+                # spenta): 404, mai la PWA. Un 200 HTML su /mcp o sui metadati OAuth farebbe
+                # ignorare a Claude il `WWW-Authenticate` e il resto della scoperta
                 raise HTTPException(status_code=404)
         await super().__call__(scope, receive, send)
 

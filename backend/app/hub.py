@@ -447,7 +447,7 @@ def summary(col: Collection) -> HubSummary:
     )
 
 
-def _first_deck_name(col: Collection, nid: int) -> str | None:
+def first_deck_name(col: Collection, nid: int) -> str | None:
     row = col.db.first("select did, odid from cards where nid = ? order by ord limit 1", nid)
     if not row:
         return None
@@ -474,7 +474,7 @@ def list_drafts(col: Collection, limit: int, offset: int) -> DraftList:
                 notetype_name=note.note_type()["name"],
                 fields=dict(note.items()),
                 tags=list(note.tags),
-                deck_name=_first_deck_name(col, nid),
+                deck_name=first_deck_name(col, nid),
                 card_ids=[int(c) for c in note.card_ids()],
                 agent=_agent_of(note.tags),
                 created=nid // 1000,

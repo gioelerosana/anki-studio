@@ -126,8 +126,8 @@ def update_note(
 ):
     with manager.use() as col:
         note = _get_note(col, note_id)
-        if identity.kind == "token":
-            # un token write modifica solo le note che ha creato lui (tag agent::<nome>) e
+        if identity.scoped:
+            # un token write (o l'OAuth di /mcp) modifica solo le note che ha creato lui (tag agent::<nome>) e
             # non può toccare i tag riservati: né togliere `hub::bozza` né cambiare la provenienza
             if not (identity.agent and hub.is_own_note(note.tags, identity.agent)):
                 raise HTTPException(

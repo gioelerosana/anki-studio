@@ -206,9 +206,11 @@ _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 @dataclass(frozen=True)
 class Identity:
     """Chi sta chiamando. `session` e `admin` (il vecchio ANKI_API_TOKEN) possono tutto;
-    `token` (`ask_…`) è limitato da `scope` e dalla matrice qui sotto."""
+    `token` (`ask_…`) è limitato da `scope` e dalla matrice qui sotto. `oauth` è l'app Claude
+    che entra su /mcp con un JWT di Authentik (app/mcp_auth.py): vale come un token `write`
+    (con `review` da ANKI_MCP_OAUTH_REVIEW) e non esiste sulle rotte REST."""
 
-    kind: Literal["session", "admin", "token"]
+    kind: Literal["session", "admin", "token", "oauth"]
     name: str
     # admin = nessun limite (sessione e ANKI_API_TOKEN); read/write = token con scope
     scope: Literal["admin", "read", "write"] = "admin"
@@ -218,9 +220,14 @@ class Identity:
     token_id: str | None = None
 
     @property
+    def scoped(self) -> bool:
+        """Limitata da scope e matrice dei permessi (token `ask_…` e OAuth di /mcp)."""
+        return self.kind in ("token", "oauth")
+
+    @property
     def agent(self) -> str | None:
-        """Slug del tag di provenienza `agent::<slug>`: solo i token con scope ne hanno uno."""
-        return agent_slug(self.name) if self.kind == "token" else None
+        """Slug del tag di provenienza `agent::<slug>`: solo chi ha uno scope ne ha uno."""
+        return agent_slug(self.name) if self.scoped else None
 
 
 # ---- permessi dei token con scope --------------------------------------------------------
@@ -253,8 +260,9 @@ _WRITE_RE = [(m, re.compile(p)) for m, p in _WRITE_ROUTES]
 
 
 def token_may(identity: Identity, method: str, path: str) -> bool:
-    """La matrice "chi può cosa" per un token con scope (docs/PIANO-HUB.md)."""
-    if identity.kind != "token":
+    """La matrice "chi può cosa" per un token con scope (docs/PIANO-HUB.md). La usano anche gli
+    strumenti MCP, con il percorso REST equivalente: un permesso solo, in un posto solo."""
+    if not identity.scoped:
         return True
     api_path = path.removeprefix("/api")
     if method == "GET":
@@ -268,9 +276,10 @@ def _forbidden_for_token() -> HTTPException:
     return HTTPException(status.HTTP_403_FORBIDDEN, "Questo token non può fare questa operazione")
 
 
-def _identify_bearer(request: HTTPConnection, token: str, settings: Settings) -> Identity | None:
-    """L'identità di un token Bearer, o None se non vale (e allora conta come tentativo
-    sbagliato per il rate limit, tranne il caso descritto sotto)."""
+def match_bearer(request: HTTPConnection, token: str, settings: Settings) -> Identity | None:
+    """L'identità di un token statico (`ANKI_API_TOKEN` o `ask_…`), o None. Non tocca il rate
+    limit: chi chiama decide se un None è un tentativo sbagliato (vedi `_identify_bearer` e
+    app/mcp_auth.py, che prima di arrendersi prova anche i JWT)."""
     expected = settings.anki_api_token
     if expected is not None and secrets.compare_digest(token.encode(), expected.encode()):
         return Identity(kind="admin", name="Token dell'API")
@@ -288,7 +297,16 @@ def _identify_bearer(request: HTTPConnection, token: str, settings: Settings) ->
                 review=stored.review,
                 token_id=stored.id,
             )
-    elif expected is None:
+    return None
+
+
+def _identify_bearer(request: HTTPConnection, token: str, settings: Settings) -> Identity | None:
+    """L'identità di un token Bearer, o None se non vale (e allora conta come tentativo
+    sbagliato per il rate limit, tranne il caso descritto sotto)."""
+    identity = match_bearer(request, token, settings)
+    if identity is not None:
+        return identity
+    if not token.startswith(TOKEN_PREFIX) and settings.anki_api_token is None:
         # nessun ANKI_API_TOKEN da indovinare: è la PWA di prima (in cache) con il token
         # vecchio, che non deve far bloccare l'IP proprio mentre passa al login con Authentik
         return None
@@ -390,11 +408,22 @@ _API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-ac
 _MEDIA_CSP = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox"
 
 
+def is_api_path(path: str) -> bool:
+    """Le risposte "da API" (JSON, mai la PWA): /api, il server MCP e i metadati OAuth."""
+    return (
+        path == "/api"
+        or path.startswith("/api/")
+        or path == "/mcp"
+        or path.startswith("/mcp/")
+        or path.startswith("/.well-known/")
+    )
+
+
 def security_headers(request: Request, headers) -> None:
     path = request.url.path
     if request.url.scheme == "https":
         headers.setdefault("Strict-Transport-Security", "max-age=15552000")
-    if path != "/api" and not path.startswith("/api/"):
+    if not is_api_path(path):
         # la PWA (app/web.py): la CSP della shell la mette PWAFiles su index.html,
         # la cache dipende dal file. Niente iframe: la PWA non va incorniciata da altri.
         headers.setdefault("X-Content-Type-Options", "nosniff")
