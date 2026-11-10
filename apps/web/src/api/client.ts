@@ -7,11 +7,19 @@
  * dopo il login su Authentik (app/auth.tsx). Un 401 vuol dire sessione scaduta.
  */
 import type {
+  ApiToken,
+  ApiTokenCreated,
   AuthLogout,
   AuthUser,
+  CardPreview,
   DeckNode,
   DeckOptions,
+  DraftApproveResult,
+  DraftDiscardResult,
+  DraftList,
+  HubSummary,
   NoteSearchResult,
+  NoteTagsResult,
   Stats,
   Note,
   Notetype,
@@ -20,6 +28,7 @@ import type {
   SyncResult,
   SyncStatus,
   TodayStats,
+  TokenScope,
   TypedAnswer,
 } from './types';
 
@@ -117,4 +126,26 @@ export const api = {
   syncLogout: () => request<void>('POST', '/sync/logout'),
   sync: () => request<SyncResult>('POST', '/sync'),
   fullSync: (direction: 'upload' | 'download') => request<SyncResult>('POST', '/sync/full', { direction }),
+
+  /* ---- hub: bozze degli agenti, libreria, token (docs/PIANO-HUB.md) ---- */
+  hubSummary: () => request<HubSummary>('GET', '/hub/summary'),
+  drafts: (limit = 50, offset = 0) =>
+    request<DraftList>('GET', `/hub/drafts?${new URLSearchParams({ limit: String(limit), offset: String(offset) })}`),
+  approveDrafts: (noteIds: number[]) => request<DraftApproveResult>('POST', '/hub/drafts/approve', { note_ids: noteIds }),
+  /** Cancella le bozze scelte (solo quelle: mai note normali). Chiedi sempre conferma prima. */
+  discardDrafts: (noteIds: number[]) => request<DraftDiscardResult>('POST', '/hub/drafts/discard', { note_ids: noteIds }),
+  cardPreview: (cardId: number) => request<CardPreview>('GET', `/cards/${cardId}/preview`),
+  moveNote: (id: number, deckId: number) => request<Note>('POST', `/notes/${id}/move`, { deck_id: deckId }),
+  /** Cancella la nota con le sue carte. Solo dalla sessione della PWA; chiedi sempre conferma. */
+  deleteNote: (id: number) => request<void>('DELETE', `/notes/${id}`),
+  editNoteTags: (noteIds: number[], change: { add?: string[]; remove?: string[] }) =>
+    request<NoteTagsResult>('POST', '/notes/tags', { note_ids: noteIds, add: change.add ?? [], remove: change.remove ?? [] }),
+
+  /** Token per gli agenti (solo dalla sessione). Il token in chiaro si vede alla creazione e basta. */
+  tokens: () => request<ApiToken[]>('GET', '/tokens'),
+  createToken: (input: { name: string; scope?: TokenScope; review?: boolean }) =>
+    request<ApiTokenCreated>('POST', '/tokens', input),
+  updateToken: (id: string, patch: { scope?: TokenScope; review?: boolean }) =>
+    request<ApiToken>('PATCH', `/tokens/${id}`, patch),
+  deleteToken: (id: string) => request<void>('DELETE', `/tokens/${id}`),
 };

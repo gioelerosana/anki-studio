@@ -303,3 +303,174 @@ class AuthUser(BaseModel):
 class AuthLogout(BaseModel):
     # end-session di Authentik: la PWA ci naviga per chiudere anche quella sessione
     logout_url: str | None = None
+
+
+# ---- hub: creazione da agenti, bozze, libreria, token (docs/PIANO-HUB.md) --------
+#
+# Contratto condiviso tra REST (app/routers/hub.py), server MCP (app/mcp_server.py) e PWA.
+# Se cambi qualcosa qui, aggiorna apps/web/src/api/types.ts.
+
+
+class HubNoteIn(BaseModel):
+    # nome completo ("Lingue::Spagnolo") o id numerico
+    deck: str | int
+    # nome del tipo di nota ("Basic", "Cloze") o id numerico
+    notetype: str | int
+    fields: dict[str, str]
+    tags: list[str] = []
+    # id scelto dall'agente per rendere l'invio ripetibile: diventa il tag `ext::<id>`.
+    # Se esiste già una nota con quel tag viene aggiornata (o lasciata com'è) invece di duplicarla.
+    external_id: str | None = Field(default=None, max_length=200, pattern=r"^\S+$")
+
+
+class HubBatchIn(BaseModel):
+    notes: list[HubNoteIn] = Field(min_length=1, max_length=100)
+    # niente viene scritto: restituisce solo cosa succederebbe
+    dry_run: bool = False
+    # crea i mazzi che non esistono (altrimenti la nota è un errore)
+    create_missing_decks: bool = False
+    # True = bozza (carte sospese, tag `hub::bozza`). None = il default del token
+    # (la sessione della PWA: False). Un token con `review=True` non può forzare False.
+    draft: bool | None = None
+
+
+class HubNoteResult(BaseModel):
+    index: int
+    # unchanged: external_id già presente con gli stessi campi; duplicate: stesso primo campo
+    # senza external_id (note_id punta a quella esistente)
+    status: Literal["created", "updated", "unchanged", "duplicate", "error"]
+    note_id: int | None = None
+    card_ids: list[int] = []
+    error: str | None = None
+
+
+class HubBatchOut(BaseModel):
+    dry_run: bool
+    draft: bool
+    created: int
+    updated: int
+    unchanged: int
+    duplicates: int
+    errors: int
+    results: list[HubNoteResult]
+
+
+class HubDeckIn(BaseModel):
+    # nome completo, es. "Lingue::Spagnolo::Verbi"
+    name: str = Field(min_length=1, max_length=500)
+
+
+class HubDeckOut(BaseModel):
+    id: int
+    name: str
+    # False se esisteva già (la rotta è idempotente)
+    created: bool
+
+
+class HubSummary(BaseModel):
+    # note in bozza da approvare (per il badge della PWA)
+    drafts: int
+
+
+class DraftNote(BaseModel):
+    id: int
+    notetype_id: int
+    notetype_name: str
+    fields: dict[str, str]
+    tags: list[str]
+    deck_name: str | None
+    card_ids: list[int]
+    # nome dell'agente dal tag `agent::<nome>`, se c'è
+    agent: str | None
+    # secondi epoch (dall'id della nota)
+    created: int
+
+
+class DraftList(BaseModel):
+    total: int
+    notes: list[DraftNote]
+
+
+class NoteIdsIn(BaseModel):
+    note_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class DraftApproveOut(BaseModel):
+    # note passate da bozza a normali (carte riattivate, tag `hub::bozza` tolto)
+    approved: int
+
+
+class DraftDiscardOut(BaseModel):
+    # note cancellate: solo quelle che erano davvero bozze, mai altre
+    discarded: int
+
+
+class NoteMoveIn(BaseModel):
+    deck_id: int
+
+
+class NoteTagsIn(BaseModel):
+    note_ids: list[int] = Field(min_length=1, max_length=500)
+    add: list[str] = []
+    remove: list[str] = []
+
+
+class NoteTagsOut(BaseModel):
+    updated: int
+
+
+class CardPreview(BaseModel):
+    """Una carta mostrata fuori dallo studio (libreria, bozze): come StudyCard, senza
+    pulsanti e senza coda, quindi vale anche per le carte sospese."""
+
+    card_id: int
+    note_id: int
+    deck_id: int
+    deck_name: str
+    question_html: str
+    answer_html: str
+    css: str
+    card_class: str
+    question_av: list[AvItem]
+    answer_av: list[AvItem]
+    flag: int
+    suspended: bool
+
+
+class TokenIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    # read: solo letture; write: legge e crea/modifica note (mai cancella, mai sync completa)
+    scope: Literal["read", "write"] = "write"
+    # le note create da questo token arrivano come bozze
+    review: bool = True
+
+
+class TokenUpdate(BaseModel):
+    scope: Literal["read", "write"] | None = None
+    review: bool | None = None
+
+
+class TokenOut(BaseModel):
+    id: str
+    name: str
+    scope: Literal["read", "write"]
+    review: bool
+    # secondi epoch
+    created_at: int
+    last_used_at: int | None = None
+
+
+class TokenCreated(TokenOut):
+    # il token in chiaro, mostrato UNA volta sola: sul server resta solo l'hash
+    token: str
+
+
+class MediaIn(BaseModel):
+    # nome desiderato (Anki può cambiarlo se esiste già un file diverso con lo stesso nome)
+    filename: str = Field(min_length=1, max_length=200)
+    data_base64: str
+
+
+class MediaOut(BaseModel):
+    # nome da usare nei campi: `<img src="…">` o `[sound:…]`
+    filename: str

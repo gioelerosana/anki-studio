@@ -254,3 +254,75 @@ export interface AuthLogout {
   /** End-session di Authentik: ci si naviga per chiudere anche quella sessione. */
   logout_url: string | null;
 }
+
+/* ---- hub: creazione da agenti, bozze, libreria, token (specchio di schemas.py, docs/PIANO-HUB.md) ---- */
+
+export interface HubSummary {
+  /** Note in bozza da approvare (badge). */
+  drafts: number;
+}
+
+export interface DraftNote {
+  id: number;
+  notetype_id: number;
+  notetype_name: string;
+  fields: Record<string, string>;
+  tags: string[];
+  deck_name: string | null;
+  card_ids: number[];
+  /** Nome dell'agente dal tag `agent::<nome>`. */
+  agent: string | null;
+  /** Secondi epoch. */
+  created: number;
+}
+
+export interface DraftList {
+  total: number;
+  notes: DraftNote[];
+}
+
+export interface DraftApproveResult {
+  approved: number;
+}
+
+export interface DraftDiscardResult {
+  discarded: number;
+}
+
+export interface NoteTagsResult {
+  updated: number;
+}
+
+/** Una carta fuori dallo studio (libreria, bozze): vale anche per le carte sospese. */
+export interface CardPreview {
+  card_id: number;
+  note_id: number;
+  deck_id: number;
+  deck_name: string;
+  question_html: string;
+  answer_html: string;
+  css: string;
+  card_class: string;
+  question_av: AvItem[];
+  answer_av: AvItem[];
+  flag: number;
+  suspended: boolean;
+}
+
+export type TokenScope = 'read' | 'write';
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  scope: TokenScope;
+  /** Le note create da questo token arrivano come bozze. */
+  review: boolean;
+  /** Secondi epoch. */
+  created_at: number;
+  last_used_at: number | null;
+}
+
+/** Risposta alla creazione: `token` si vede UNA volta sola. */
+export interface ApiTokenCreated extends ApiToken {
+  token: string;
+}
