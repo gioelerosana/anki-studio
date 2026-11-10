@@ -89,6 +89,14 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
   // API e media delle carte: sempre dalla rete (il backend gestisce la cache HTTP dei media).
-  if (url.pathname.startsWith('/api/')) return;
+  // Anche il server MCP (/mcp) e la discovery OAuth (/.well-known/): non sono parte della shell,
+  // e una risposta di autenticazione in cache romperebbe il collegamento degli agenti.
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname === '/mcp' ||
+    url.pathname.startsWith('/mcp/') ||
+    url.pathname.startsWith('/.well-known/')
+  )
+    return;
   event.respondWith(request.mode === 'navigate' ? handleNavigation(event) : handleAsset(event));
 });
