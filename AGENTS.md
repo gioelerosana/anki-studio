@@ -83,7 +83,7 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Aggiunta carte (tipo di nota, mazzo, campi, tag)
 - [x] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
 - [x] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
-- [x] Telecomando: il telefono comanda lo studio aperto sul computer (`#/remote`, WebSocket `/api/remote`)
+- [x] Telecomando: il telefono sceglie il mazzo e comanda lo studio aperto sul computer (`#/remote`, WebSocket `/api/remote`)
 - [ ] Telecomando provato su iPhone + computer veri (Wake Lock, riconnessione dopo lo standby)
 - [ ] Test su iPad reale come PWA installata (offline della shell, safe area, tastiera)
 - [ ] Risposta scritta `{{type:…}}` e altre richieste al backend in [`docs/REQUESTS-WEB-TO-API.md`](docs/REQUESTS-WEB-TO-API.md)
