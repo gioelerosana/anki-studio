@@ -14,7 +14,7 @@ from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
 from .logging_setup import register_secret, setup_logging
-from .routers import auth, browse, decks, media, notes, study, sync, tokens as tokens_router
+from .routers import auth, browse, decks, hub, media, notes, study, sync, tokens as tokens_router
 from .oidc import OIDCClient
 from .remote import RemoteHub
 from .remote import router as remote_router
@@ -104,6 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             endpoint=settings.anki_sync_endpoint,
             backup_dir=settings.backup_dir,
             io_timeout_secs=settings.anki_sync_io_timeout,
+            after_write_seconds=settings.anki_sync_after_write_seconds,
         )
         app.state.manager = manager
         app.state.sync = service
@@ -123,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            service.cancel_pending()
             # una sync partita prima dello spegnimento continua nel suo thread: la aspettiamo
             idle = await run_in_threadpool(service.wait_idle, _SHUTDOWN_WAIT_S)
             if not idle:
@@ -250,6 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         browse.router,
         sync.router,
         media.router,
+        hub.router,
         tokens_router.router,
     )
     for r in routers:

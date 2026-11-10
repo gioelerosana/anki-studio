@@ -17,6 +17,7 @@ from anki.utils import int_time
 
 from ..collection import CollectionManager
 from ..deps import get_manager
+from ..hub import UNDO_LABELS
 from ..rendering import render_card, render_typed_answer, strip_bidi
 from ..schemas import (
     AnswerIn,
@@ -44,8 +45,9 @@ _RATING = {
 
 
 # `decks.select()` è un'operazione annullabile ("Seleziona mazzo"): ci segniamo il suo
-# nome (tradotto) per non proporla mai come cosa da annullare
-_select_labels: set[str] = set()
+# nome (tradotto) per non proporla mai come cosa da annullare. Ci mettiamo anche le voci
+# dell'hub (batch di un agente, approvazione bozze): non sono cose da annullare mentre si studia.
+_select_labels: set[str] = set(UNDO_LABELS)
 
 
 def _select_deck(col: Collection, deck_id: int) -> None:

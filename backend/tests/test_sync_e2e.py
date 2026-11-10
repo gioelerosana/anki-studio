@@ -584,3 +584,49 @@ def test_startup_sync_runs_in_background(server, make_app, desktop):
             assert col.find_notes('"Front:avvio"')
     finally:
         restarted.close()
+
+
+def test_agent_notes_reach_the_desktop_without_a_manual_sync(server, make_app, desktop):
+    """Una batch da un token parte da sola verso il server di sync (debounce di 1 s)
+    e il desktop la riceve; più scritture ravvicinate fanno una sola sync."""
+    app = make_app(endpoint=server.endpoint, seed=True, anki_sync_after_write_seconds=1)
+    _initial(app, desktop)
+    token = app.c.post("/api/tokens", json={"name": "claude", "review": True}).json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    for i in range(3):
+        r = app.c.post(
+            "/api/hub/notes/batch",
+            headers=headers,
+            json={
+                "notes": [
+                    {
+                        "deck": "Lingue::Spagnolo::Verbi",
+                        "notetype": "Basic",
+                        "fields": {"Front": f"agente {i}", "Back": "x"},
+                        "external_id": f"agente-{i}",
+                    }
+                ]
+            },
+        )
+        assert r.status_code == 200 and r.json()["created"] == 1
+
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        last = app.sync.last_result
+        if (
+            last is not None
+            and last.outcome == SyncOutcome.SYNCED
+            and app.sync.running is None
+            and app.sync._soon_timer is None
+        ):
+            break
+        time.sleep(0.1)
+    assert app.sync.last_result is not None and app.sync.last_result.outcome == SyncOutcome.SYNCED
+
+    assert desktop.sync() == "synced"
+    ids = desktop.col.find_notes("tag:agent::claude")
+    assert len(ids) == 3
+    note = desktop.col.get_note(ids[0])
+    # arrivano come bozze: con tag e carte sospese anche sull'altro dispositivo
+    assert "hub::bozza" in note.tags and any("ext::agente-" in t for t in note.tags)
+    assert all(desktop.col.get_card(c).queue == -1 for c in note.card_ids())
