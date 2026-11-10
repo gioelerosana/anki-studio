@@ -310,6 +310,52 @@ def test_add_media(mcp_client, tokens):
     assert big["isError"] and "10 MB" in text_of(big)
 
 
+def test_add_media_refuses_svg(mcp_client, tokens):
+    token = tokens("claude")
+    svg = base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg"/>').decode()
+    for name in ("logo.svg", "LOGO.SVG"):
+        r = call(mcp_client, "add_media", {"filename": name, "data_base64": svg}, token=token)
+        assert r["isError"] and "SVG" in text_of(r) and "PNG" in text_of(r)
+    tool = next(t for t in list_tools(mcp_client) if t["name"] == "add_media")
+    assert "svg senza script" not in tool["description"] and "NON sono ammessi" in tool["description"]
+
+
+def list_tools(client):
+    _, msg = rpc(client, "tools/list")
+    return msg["result"]["tools"]
+
+
+def test_review_token_redrafts_an_approved_note_through_mcp(mcp_client, tokens):
+    token = tokens("claude", review=True)
+    out = call(mcp_client, "add_notes", {"notes": [note_args("r", "uno", external_id="r1")]}, token=token)
+    nid = out["structuredContent"]["results"][0]["note_id"]
+    mcp_client.post("/api/hub/drafts/approve", json={"note_ids": [nid]})
+    assert not call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]["draft"]
+
+    # add_notes con lo stesso external_id e un contenuto diverso
+    call(mcp_client, "add_notes", {"notes": [note_args("r", "due", external_id="r1")]}, token=token)
+    assert call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]["draft"]
+
+    # update_note su una nota approvata di nuovo
+    mcp_client.post("/api/hub/drafts/approve", json={"note_ids": [nid]})
+    call(mcp_client, "update_note", {"note_id": nid, "fields": {"Back": "tre"}}, token=token)
+    got = call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]
+    assert got["draft"] and got["fields"]["Back"] == "tre"
+
+
+def test_external_id_pattern_and_size_limits_over_mcp(mcp_client, tokens):
+    token = tokens("claude")
+    for bad in ("con spazio", "a*b", "x" * 201):
+        r = call(mcp_client, "add_notes", {"notes": [note_args("x", external_id=bad)]}, token=token)
+        assert r["isError"], bad
+    big = call(mcp_client, "add_notes", {"notes": [note_args("g", "x" * (200 * 1024 + 1))]}, token=token)
+    assert big["isError"] and "200 KB" in text_of(big)
+    total = call(mcp_client, "add_notes", {"notes": [note_args(f"n{i}", "x" * (190 * 1024)) for i in range(11)]}, token=token)
+    assert total["isError"] and "2 MB" in text_of(total)
+    patch = call(mcp_client, "update_note", {"note_id": 1, "fields": {"Back": "x" * (200 * 1024 + 1)}}, token=token)
+    assert patch["isError"]
+
+
 # ---- permessi ---------------------------------------------------------------------------------------
 
 

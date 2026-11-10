@@ -113,10 +113,9 @@ class NoteInput(HubNoteIn):
     )
     external_id: str | None = Field(
         default=None,
-        max_length=200,
-        pattern=r"^\S+$",
-        description="Id stabile scelto da te, senza spazi: rimandare la stessa nota la aggiorna "
-        "(o la lascia com'è) invece di duplicarla. Consigliato sempre.",
+        pattern=r"^[A-Za-z0-9._:-]{1,200}$",
+        description="Id stabile scelto da te (1-200 caratteri: lettere, cifre e . _ : -): rimandare "
+        "la stessa nota la aggiorna (o la lascia com'è) invece di duplicarla. Consigliato sempre.",
     )
 
 
@@ -343,13 +342,14 @@ def build_mcp(app: FastAPI, settings: Settings) -> McpApp:
         """Crea fino a 100 note in un colpo solo. Ogni nota ha il suo esito (`created`, `updated`,
         `unchanged`, `duplicate`, `error` con il motivo): un errore non ferma le altre, quindi
         controlla `results`. Provala prima con `dry_run=true`. Con lo stesso `external_id` una nota
-        già inviata da te si aggiorna (campi passati, tag nuovi) invece di duplicarsi; senza
+        già inviata da te si aggiorna (campi passati, tag nuovi) invece di duplicarsi (con la revisione
+        attiva, anche una nota già approvata torna bozza se la modifichi); senza
         `external_id` un primo campo uguale a una nota esistente dello stesso tipo dà `duplicate`.
         Le note portano il tag `agent::<tuo nome>`. Se il tuo accesso richiede la revisione
         (`draft: true` nell'esito) le note sono BOZZE: carte sospese e tag `hub::bozza`, fuori
         dallo studio finché l'utente non le approva nella app (da qui non si può). Tutta la batch
         è una sola operazione annullabile; dopo la scrittura la collezione si sincronizza da sola
-        con AnkiWeb."""
+        con AnkiWeb. Tetti: 200 KB per campo e 2 MB per batch (altrimenti errore, senza scrivere)."""
         with _guard(ctx, "add_notes", "POST", "/api/hub/notes/batch") as who:
             body = HubBatchIn(
                 notes=[HubNoteIn(**n.model_dump()) for n in notes],
@@ -386,8 +386,10 @@ def build_mcp(app: FastAPI, settings: Settings) -> McpApp:
     ) -> NoteOut:
         """Modifica campi e/o tag di una nota CREATA DA TE (che ha il tuo tag `agent::<nome>`):
         le note dell'utente o di altri agenti non si possono modificare, anche se le vedi con
-        `search_notes`. Non può togliere lo stato di bozza né cambiare la provenienza. Questo
-        sovrascrive il contenuto precedente dei campi indicati."""
+        `search_notes`. Non può togliere lo stato di bozza né cambiare la provenienza. Se il tuo
+        accesso richiede la revisione, modificare una nota già approvata la RIMETTE in bozza (carte
+        sospese) finché l'utente non la riapprova. Questo sovrascrive il contenuto precedente dei
+        campi indicati. Tetto: 200 KB per campo."""
         with _guard(ctx, "update_note", "PATCH", f"/api/notes/{note_id}") as who:
             if fields is None and tags is None:
                 raise ToolError("Non c'è niente da modificare: passa almeno `fields` o `tags`.")

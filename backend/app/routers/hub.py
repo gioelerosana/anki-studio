@@ -47,9 +47,14 @@ def create_notes_batch(
 ):
     """Fino a 100 note, ognuna col suo esito. `dry_run` non scrive niente. Una batch è
     una sola operazione annullabile. Le note di un token portano `agent::<nome>`; con
-    `review` (token) o `draft` sono bozze: carte sospese e tag `hub::bozza`."""
+    `review` (token) o `draft` sono bozze: carte sospese e tag `hub::bozza`. Con `review` anche
+    una nota già approvata, se la modifichi rimandando lo stesso `external_id`, torna bozza.
+    Tetti: 200 KB per campo e 2 MB per batch (422)."""
     with manager.use() as col:
-        out = hub.create_batch(col, body, agent=identity.agent, review=identity.review)
+        try:
+            out = hub.create_batch(col, body, agent=identity.agent, review=identity.review)
+        except hub.HubError as e:  # batch troppo grande: 422 prima di scrivere
+            raise hub_http_error(e)
     if not out.dry_run and (out.created or out.updated):
         sync.request_soon()
     return out
@@ -80,7 +85,7 @@ def summary(manager: CollectionManager = Depends(get_manager)):
 
 @router.get("/hub/drafts", response_model=DraftList)
 def list_drafts(
-    limit: int = Query(50, ge=1, le=_MAX_LIMIT),
+    limit: int = Query(50, ge=1, le=_MAX_LIMIT, description=f"Al massimo {_MAX_LIMIT}"),
     offset: int = Query(0, ge=0),
     manager: CollectionManager = Depends(get_manager),
 ):
@@ -94,12 +99,13 @@ def approve_drafts(
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
 ):
-    """Le carte tornano attive e il tag `hub::bozza` sparisce. Gli id che non sono bozze si ignorano."""
+    """Le carte tornano attive e il tag `hub::bozza` sparisce. Gli id che non sono (più) bozze, o
+    che sono cambiati dopo `expected_mod`, non si toccano e tornano in `skipped_ids`."""
     with manager.use() as col:
-        approved = hub.approve_drafts(col, body.note_ids)
-    if approved:
+        out = hub.approve_drafts(col, body.note_ids, body.expected_mod)
+    if out.approved:
         sync.request_soon()
-    return DraftApproveOut(approved=approved)
+    return out
 
 
 @router.post("/hub/drafts/discard", response_model=DraftDiscardOut)
@@ -108,12 +114,13 @@ def discard_drafts(
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
 ):
-    """Cancella le note scelte, ma solo se sono bozze: le altre restano dove sono."""
+    """Cancella le note scelte, ma solo bozze vere (carte tutte sospese e mai ripassate): le altre
+    restano dove sono e tornano in `skipped_ids`, come quelle cambiate dopo `expected_mod`."""
     with manager.use() as col:
-        discarded = hub.discard_drafts(col, body.note_ids)
-    if discarded:
+        out = hub.discard_drafts(col, body.note_ids, body.expected_mod)
+    if out.discarded:
         sync.request_soon()
-    return DraftDiscardOut(discarded=discarded)
+    return out
 
 
 @router.get("/cards/{card_id}/preview", response_model=CardPreview)

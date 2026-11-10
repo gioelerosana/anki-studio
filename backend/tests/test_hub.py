@@ -23,6 +23,12 @@ def get_note(client, note_id):
     return r.json()
 
 
+def add_tag_directly(client, note_id, tag):
+    """Come se il tag arrivasse da Anki desktop o da un altro dispositivo (sync)."""
+    with client.app.state.manager.use() as col:
+        col.tags.bulk_add([note_id], tag)
+
+
 def card_queues(client, note_id):
     with client.app.state.manager.use() as col:
         return [col.get_card(c).queue for c in col.get_note(note_id).card_ids()]
@@ -205,6 +211,35 @@ def test_batch_is_one_undoable_operation(client):
         assert col.note_count() == before
 
 
+@pytest.mark.parametrize("draft", [False, True])
+def test_batch_of_100_notes_is_one_undoable_operation(client, draft):
+    """Anki tiene solo 30 passi di undo: con 100 note (e le carte sospese) la voce unica cadrebbe
+    dalla pila se i passi non venissero fusi man mano."""
+    before = note_count(client)
+    out = post_batch(client, [basic(f"c{i}") for i in range(100)], draft=draft)
+    assert out["created"] == 100 and note_count(client) == before + 100
+    with client.app.state.manager.use() as col:
+        assert col.undo_status().undo == "Aggiungi note da agente"
+        col.undo()
+        assert col.note_count() == before
+    assert client.get("/api/hub/summary").json() == {"drafts": 0}
+
+
+def test_batch_updating_100_notes_is_one_undoable_operation(client, make_token):
+    headers, _ = make_token("claude", review=True)
+    notes = [basic(f"u{i}", "uno", external_id=f"u{i}") for i in range(100)]
+    post_batch(client, notes, headers=headers)
+    ids = [n["id"] for n in client.get("/api/hub/drafts?limit=200").json()["notes"]]
+    client.post("/api/hub/drafts/approve", json={"note_ids": ids})
+    out = post_batch(client, [basic(f"u{i}", "due", external_id=f"u{i}") for i in range(100)], headers=headers)
+    assert out["updated"] == 100
+    with client.app.state.manager.use() as col:
+        assert col.undo_status().undo == "Aggiungi note da agente"
+        col.undo()  # una sola voce: torna tutto com'era prima dell'aggiornamento
+    assert client.get("/api/hub/summary").json() == {"drafts": 0}
+    assert get_note(client, ids[0])["fields"]["Back"] == "uno"
+
+
 def test_batch_with_nothing_to_write_leaves_no_undo_entry(client):
     with client.app.state.manager.use() as col:
         label = col.undo_status().undo
@@ -274,7 +309,8 @@ def test_draft_list_approve_and_discard(client, make_token):
     # approvare: carte riattivate e tag tolto; un id che non è bozza si ignora
     normal = client.get("/api/search/notes?q=ser").json()["notes"][0]["id"]
     r = client.post("/api/hub/drafts/approve", json={"note_ids": [ids[0], normal, 999]})
-    assert r.json() == {"approved": 1}
+    # `normal` e 999 non sono bozze: si saltano, ma lo si dice
+    assert r.json() == {"approved": 1, "skipped_ids": [normal, 999]}
     approved = get_note(client, ids[0])
     assert "hub::bozza" not in approved["tags"] and "agent::claude" in approved["tags"]
     assert card_queues(client, ids[0]) == [0]
@@ -282,7 +318,7 @@ def test_draft_list_approve_and_discard(client, make_token):
 
     # scartare: solo le bozze. Una nota normale resta, anche se la si chiede
     r = client.post("/api/hub/drafts/discard", json={"note_ids": [ids[1], ids[0], normal]})
-    assert r.json() == {"discarded": 1}
+    assert r.json() == {"discarded": 1, "skipped_ids": [ids[0], normal]}
     assert client.get(f"/api/notes/{ids[1]}").status_code == 404
     assert client.get(f"/api/notes/{ids[0]}").status_code == 200
     assert client.get(f"/api/notes/{normal}").status_code == 200
@@ -304,8 +340,9 @@ def test_discard_cannot_remove_a_note_that_only_looks_like_a_draft(client):
     # `hub::bozza::x` e `hub::bozza-no` non sono bozze
     for tag in ("hub::bozza::figlio", "hub::bozza-no"):
         nid = post_batch(client, [basic(tag)])["results"][0]["note_id"]
-        client.patch(f"/api/notes/{nid}", json={"tags": [tag]})
-        assert client.post("/api/hub/drafts/discard", json={"note_ids": [nid]}).json() == {"discarded": 0}
+        add_tag_directly(client, nid, tag)  # dalla REST i tag `hub::` non si possono mettere
+        out = client.post("/api/hub/drafts/discard", json={"note_ids": [nid]}).json()
+        assert out == {"discarded": 0, "skipped_ids": [nid]}
         assert client.get(f"/api/notes/{nid}").status_code == 200
 
 

@@ -118,7 +118,10 @@ def test_routes_request_a_sync_after_a_real_write(client, make_token):
         assert client.patch(f"/api/notes/{nid}", json={"fields": {"Back": "x"}}, headers=headers).status_code == 200
         assert fake.requests == 2
         # le scritture hub dalla sessione/amministratore contano
-        assert client.post("/api/hub/drafts/approve", json={"note_ids": [nid]}).json() == {"approved": 1}
+        assert client.post("/api/hub/drafts/approve", json={"note_ids": [nid]}).json() == {
+            "approved": 1,
+            "skipped_ids": [],
+        }
         assert client.post("/api/hub/decks", json={"name": "Nuovo"}).status_code == 200
         client.post("/api/hub/decks", json={"name": "Nuovo"})  # esisteva già
         assert fake.requests == 4

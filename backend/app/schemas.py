@@ -320,7 +320,9 @@ class HubNoteIn(BaseModel):
     tags: list[str] = []
     # id scelto dall'agente per rendere l'invio ripetibile: diventa il tag `ext::<id>`.
     # Se esiste già una nota con quel tag viene aggiornata (o lasciata com'è) invece di duplicarla.
-    external_id: str | None = Field(default=None, max_length=200, pattern=r"^\S+$")
+    # Solo lettere, cifre e `. _ : -`: finisce in un tag di Anki e in una ricerca, e un carattere
+    # speciale (spazio, `*`, `\`, `"`) cambierebbe cosa trova.
+    external_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,200}$")
 
 
 class HubBatchIn(BaseModel):

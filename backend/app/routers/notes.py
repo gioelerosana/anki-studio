@@ -135,12 +135,29 @@ def update_note(
                 )
             if body.tags is not None:
                 body = body.model_copy(update={"tags": hub.merge_agent_tags(note.tags, body.tags)})
+            try:
+                hub.check_field_sizes(body.fields or {})
+            except hub.HubError as e:
+                raise hub_http_error(e)
+        elif body.tags is not None:
+            # la sessione può cambiare i tag normali, ma non quelli dell'hub (la PWA rimanda
+            # quelli che la nota ha già): per le bozze ci sono Approva e Scarta
+            try:
+                hub.ensure_reserved_unchanged(note.tags, body.tags)
+            except hub.HubError as e:
+                raise hub_http_error(e)
+        before = (list(note.fields), list(note.tags))
         if body.fields is not None:
             _apply_fields(note, body.fields)
         if body.tags is not None:
             note.tags = body.tags
         _check(note, allow_duplicate=True)
+        if (list(note.fields), list(note.tags)) != before:
+            # un token con `review` non può cambiare di nascosto una nota già approvata
+            hub.redraft(note, review=identity.review)
         col.update_note(note)
+        # una bozza non deve avere carte attive, nemmeno quelle nuove create da questa modifica
+        hub.suspend_draft_cards(col, note)
         out = _note_out(note)
     sync.request_soon()
     return out
@@ -186,9 +203,13 @@ def change_tags(
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
 ):
-    """Aggiunge e/o toglie tag a più note in un colpo solo (un'unica voce di undo)."""
+    """Aggiunge e/o toglie tag a più note in un colpo solo (un'unica voce di undo). I tag
+    `hub::…`, `agent::…` ed `ext::…` sono riservati: 422."""
     with manager.use() as col:
-        updated = hub.change_tags(col, body.note_ids, body.add, body.remove)
+        try:
+            updated = hub.change_tags(col, body.note_ids, body.add, body.remove)
+        except hub.HubError as e:  # tag riservati dell'hub
+            raise hub_http_error(e)
     if updated:
         sync.request_soon()
     return NoteTagsOut(updated=updated)

@@ -139,9 +139,12 @@ def test_token_cannot_change_reserved_tags_of_its_notes(client, make_token):
     # nemmeno svuotando i tag si toglie lo stato di bozza o la provenienza
     r = client.patch(f"/api/notes/{nid}", json={"tags": []}, headers=headers)
     assert set(r.json()["tags"]) == {"agent::claude", "hub::bozza", "ext::e"}
-    # la sessione/amministratore invece è libera
+    # la sessione/amministratore cambia i tag normali, ma nemmeno lei i riservati (422): la
+    # nota resterebbe senza `hub::bozza` con le carte sospese per sempre
     r = client.patch(f"/api/notes/{nid}", json={"tags": ["solo"]})
-    assert r.json()["tags"] == ["solo"]
+    assert r.status_code == 422
+    r = client.patch(f"/api/notes/{nid}", json={"tags": ["solo", "agent::claude", "hub::bozza", "ext::e"]})
+    assert r.status_code == 200 and set(r.json()["tags"]) == {"solo", "agent::claude", "hub::bozza", "ext::e"}
 
 
 def test_admin_token_can_do_everything(client, ids):
