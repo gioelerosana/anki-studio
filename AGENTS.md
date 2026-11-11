@@ -73,6 +73,54 @@ più agenti lavorano in parallelo sullo stesso checkout (web in `apps/web` e
 `packages/ui-kit`, backend in `backend/`). Se devi toccare l'area dell'altro (es. il
 contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia `types.ts`.
 
+## Dalla feature al server: procedura di rilascio
+
+È il ciclo completo, nell'ordine. **Ogni passo che esce dalla macchina (push, merge, tag,
+aggiornamento del server) aspetta il via esplicito dell'utente**: la prova (passo 2) è sua,
+e il suo «ok» sblocca i passi 3–6.
+
+1. **Feature** in un worktree/branch dedicato (`t3/<nome>`), con i controlli di sopra
+   (`pnpm typecheck && pnpm build`, `pnpm test:api` se tocchi il backend).
+2. **Prova in un ambiente di test servito via Tailscale**, che l'utente apre dal suo
+   dispositivo (iPad, telefono). Mai sul deploy di prova `anki-studio` né sul server vero:
+   dati, porte e progetto compose diversi.
+   ```bash
+   # dati di prova: lo script scrive in backend/data (ignorata da git)
+   cd backend && .venv/bin/python scripts/seed_dev.py && cd ..
+   # API con login di sviluppo (ANKI_DEV_LOGIN non è ammesso con ANKI_WEB_DIR) su una porta libera
+   ANKI_DEV_LOGIN=true ANKI_DATA_DIR=$PWD/backend/data setsid nohup \
+     backend/.venv/bin/uvicorn app.main:create_app --factory --app-dir backend --port 8010 >api.log 2>&1 </dev/null &
+   # PWA con Vite (accetta già *.ts.net) e proxy verso quell'API
+   API_URL=http://127.0.0.1:8010 pnpm --filter @anki-studio/web exec vite --port 5183 --strictPort &
+   # esposizione sul tailnet, su una porta HTTPS che nessun altro serve (controlla `tailscale serve status`)
+   tailscale serve --bg --https=9443 http://127.0.0.1:5183
+   ```
+   L'URL è `https://myserv.tail702c0b.ts.net:9443`. Verifica anche tu la feature (browser di
+   anteprima) prima di chiamare l'utente. Non usare `pkill -f` con un pattern che compare nel
+   tuo stesso comando: uccide la shell. **A prova finita** smonta tutto: `tailscale serve
+   --https=9443 off`, ferma API e Vite, cancella i dati di prova.
+3. **Incorporazione**: commit piccoli (Conventional Commits, in italiano, `git add` solo dei
+   file dell'area), push del branch e **PR verso `main`** con `gh`. Collega la PR al thread e
+   aspetta la CI verde (`gh pr checks`); poi merge, quando l'utente dice di procedere.
+4. **Immagine**: la crea la CI al tag. Da `main` aggiornato scegli il numero successivo
+   (`git tag --sort=-v:refname | head -1`; `vAA.V.M`, vedi README «Numerazione») e
+   `git tag -a vX.Y.Z -m "Anki Studio X.Y.Z" && git push origin vX.Y.Z`. Aspetta il workflow
+   **Pubblica su GHCR** (`gh run watch`) e leggi nel riepilogo il riferimento
+   `ghcr.io/gioelerosana/anki-studio:X.Y.Z@sha256:…` (o
+   `docker buildx imagetools inspect ghcr.io/gioelerosana/anki-studio:X.Y.Z`).
+5. **Aggiornamento del server in un nuovo thread nel progetto `stack`** (`/home/ubuntu/stack`).
+   Lo stack ha le sue regole (`AGENTS.md`, `docs/infrastructure/04-maintenance-updates.md`):
+   non si tocca da qui. Crea il thread con `t3_thread_launch` (`projectId` del progetto
+   *stack*, workspace `root`) e un prompt che contenga: versione e riferimento completo
+   `tag@sha256:`, cosa cambia nella release, e il compito — *«aggiorna il pin in
+   `COMPOSE/compose.anki-studio.yml`, `task validate`, `task updates:pull`,
+   `docker compose up -d --no-deps anki-studio`, verifica healthcheck, `/api/health` (versione) e
+   log; mantieni l'immagine precedente per il rollback; fai commit e push»*. Se l'utente ha
+   attivo l'auto-update (`deploy/stack/scripts/update-anki-studio.sh`) il pin può farlo lui, ma
+   il thread resta il modo per averlo subito e verificato.
+6. **Chiusura**: riporta all'utente versione rilasciata, link PR e thread dello stack;
+   aggiorna la Roadmap qui sotto se la feature chiude una voce.
+
 ## Roadmap
 
 **Web (`apps/web`)**
