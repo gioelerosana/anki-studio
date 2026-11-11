@@ -84,7 +84,7 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
 - [x] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
 - [x] Telecomando: il telefono sceglie il mazzo e comanda lo studio aperto sul computer (`#/remote`, WebSocket `/api/remote`)
-- [x] Hub delle flashcard: Libreria, Inbox delle bozze degli agenti e gestione token (piano in [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md))
+- [x] Hub delle flashcard: Libreria, attività recenti degli agenti con annullamento e gestione token (piano in [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md))
 - [ ] Telecomando provato su iPhone + computer veri (Wake Lock, riconnessione dopo lo standby)
 - [ ] Test su iPad reale come PWA installata (offline della shell, safe area, tastiera)
 - [ ] Risposta scritta `{{type:…}}` e altre richieste al backend in [`docs/REQUESTS-WEB-TO-API.md`](docs/REQUESTS-WEB-TO-API.md)
@@ -98,7 +98,7 @@ contratto API), scrivilo nel messaggio di commit e aggiorna sia `schemas.py` sia
 - [x] Sicurezza: rate limit su token e login, header di sicurezza, log senza segreti, proxy headers
 - [x] Login OIDC con Authentik (Authorization Code + PKCE, sessione in cookie HttpOnly, CSRF)
 - [x] Healthcheck significativo, logging strutturato, backup automatici e del volume dati
-- [x] Hub per gli agenti: API di creazione in blocco con bozze e token con scope, server MCP su `/mcp` (Bearer e OAuth Authentik), media — [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md)
+- [x] Hub per gli agenti: API di creazione in blocco (le note entrano subito, niente bozze) e token con scope, diario delle operazioni con annullamento (`/api/hub/operations`, tool MCP `list_operations`/`undo_operation`), server MCP su `/mcp` (Bearer e OAuth Authentik), media — [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md)
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
 - [ ] Modifica delle opzioni del mazzo dalla PWA (oggi sola lettura)
