@@ -257,6 +257,69 @@ export interface AuthLogout {
 
 /* ---- hub: creazione da agenti, libreria, token, diario delle operazioni (specchio di schemas.py, docs/PIANO-HUB.md) ---- */
 
+export interface HubNoteResult {
+  index: number;
+  /** `unchanged`: external_id già presente con gli stessi campi; `duplicate`: stesso primo campo senza external_id. */
+  status: 'created' | 'updated' | 'unchanged' | 'duplicate' | 'error';
+  note_id: number | null;
+  card_ids: number[];
+  error: string | null;
+}
+
+/** Esito di `POST /hub/notes/batch` (la PWA non lo chiama: lo usano gli agenti, qui per specchio). */
+export interface HubBatchOut {
+  dry_run: boolean;
+  created: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  errors: number;
+  results: HubNoteResult[];
+  /** Id dell'operazione annullabile nel diario; `null` se non è stato scritto niente (dry run, tutte in errore). */
+  operation_id: string | null;
+}
+
+export type OperationKind = 'add_notes' | 'update_note' | 'create_deck';
+/** `applied` = da annullare; `partial` = annullata in parte (si può riprovare); `undone` = annullata del tutto. */
+export type OperationStatus = 'applied' | 'partial' | 'undone';
+
+/** Una riga del diario delle operazioni degli agenti (`GET /hub/operations`). */
+export interface OperationOut {
+  id: string;
+  /** Secondi epoch. */
+  created_at: number;
+  /** Nome dell'agente (slug del token). */
+  agent: string;
+  kind: OperationKind;
+  /** Riepilogo già scritto dal backend, es. «3 note aggiunte in Lingue::Spagnolo». */
+  summary: string;
+  note_count: number;
+  status: OperationStatus;
+  /** Secondi epoch dell'ultimo annullamento, `null` se mai annullata. */
+  undone_at: number | null;
+}
+
+export interface OperationList {
+  operations: OperationOut[];
+}
+
+export interface UndoSkipped {
+  note_id: number | null;
+  /** Motivo in italiano (nota modificata o studiata dopo l'operazione, già cancellata…). */
+  reason: string;
+}
+
+/** Esito di `POST /hub/operations/{id}/undo`. */
+export interface UndoOut {
+  operation_id: string;
+  status: 'undone' | 'partial';
+  /** Note tornate com'erano prima di una modifica. */
+  restored: number;
+  /** Note create dall'operazione e ora cancellate. */
+  deleted: number;
+  skipped: UndoSkipped[];
+}
+
 export interface NoteTagsResult {
   updated: number;
 }

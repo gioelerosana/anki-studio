@@ -17,6 +17,7 @@ import type {
   MediaUpload,
   MediaUploadResult,
   NoteSearchResult,
+  OperationList,
   NoteTagsResult,
   Stats,
   Note,
@@ -28,6 +29,7 @@ import type {
   TodayStats,
   TokenScope,
   TypedAnswer,
+  UndoOut,
 } from './types';
 
 export class ApiError extends Error {
@@ -131,6 +133,10 @@ export const api = {
   fullSync: (direction: 'upload' | 'download') => request<SyncResult>('POST', '/sync/full', { direction }),
 
   /* ---- hub: libreria, token, diario delle operazioni degli agenti (docs/PIANO-HUB.md) ---- */
+  /** Diario delle operazioni degli agenti, dalla più recente. */
+  operations: (limit = 50) => request<OperationList>('GET', `/hub/operations?${new URLSearchParams({ limit: String(limit) })}`),
+  /** Annulla un'operazione: cancella le note create, ripristina quelle modificate, salta quelle toccate nel frattempo. 409 se già annullata. */
+  undoOperation: (id: string) => request<UndoOut>('POST', `/hub/operations/${encodeURIComponent(id)}/undo`),
   cardPreview: (cardId: number) => request<CardPreview>('GET', `/cards/${cardId}/preview`),
   moveNote: (id: number, deckId: number) => request<Note>('POST', `/notes/${id}/move`, { deck_id: deckId }),
   /** Cancella la nota con le sue carte. Solo dalla sessione della PWA; chiedi sempre conferma. */
