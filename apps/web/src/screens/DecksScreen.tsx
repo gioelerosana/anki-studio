@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Library, Plus, Settings } from 'lucide-react';
+import { Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Library, Plus, Settings } from 'lucide-react';
 import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
@@ -49,9 +49,15 @@ export function DecksScreen() {
       <HeaderBar
         title="Mazzi"
         leftContent={
-          <IconButton label="Impostazioni" onClick={() => navigate({ name: 'settings' })}>
-            <Settings />
-          </IconButton>
+          <>
+            <IconButton label="Impostazioni" onClick={() => navigate({ name: 'settings' })}>
+              <Settings />
+            </IconButton>
+            {/* Libreria (docs/PIANO-HUB.md): cerca e sistema le note, anche quelle create dagli agenti. */}
+            <IconButton label="Libreria" onClick={() => navigate({ name: 'library' })}>
+              <Library />
+            </IconButton>
+          </>
         }
         rightContent={
           <>
@@ -84,10 +90,6 @@ export function DecksScreen() {
               {error}
             </Banner>
           ) : null}
-          {/* Libreria (docs/PIANO-HUB.md): le carte create dagli agenti entrano subito, qui si cercano e si sistemano. */}
-          <nav aria-label="Libreria" className="mb-4">
-            <HubLink icon={<Library />} title="Libreria" hint="Cerca e sistema le note, anche quelle degli agenti" onClick={() => navigate({ name: 'library' })} />
-          </nav>
           {decks === null ? (
             error ? null : (
               <div className="flex justify-center p-8 text-muted-foreground">
@@ -124,22 +126,5 @@ export function DecksScreen() {
         </div>
       </main>
     </div>
-  );
-}
-
-function HubLink({ icon, title, hint, onClick }: { icon: React.ReactNode; title: string; hint: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex min-h-14 w-full items-center gap-3 rounded-lg border bg-card p-3 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground [&_svg]:size-4">{icon}</span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="truncate text-2xs text-muted-foreground">{hint}</span>
-      </span>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-    </button>
   );
 }
