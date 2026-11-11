@@ -147,8 +147,12 @@ def _identity(ctx: Context) -> Identity | None:
     return identity if isinstance(identity, Identity) else None
 
 
-def _http_message(e: HTTPException) -> str:
+def _http_message(e: HTTPException, tool: str = "") -> str:
     detail = str(e.detail)
+    if not tool.startswith("sync"):
+        # i suggerimenti sono sulla sync (AnkiWeb, conflitto, rete): per gli altri strumenti un 409 è
+        # un'altra cosa (es. operazione già annullata) e il messaggio della rotta basta
+        return detail
     hints = {
         401: " Chiedi all'utente di collegare AnkiWeb dalla app (Impostazioni).",
         409: " La scelta (caricare o scaricare la collezione) è dell'utente, dalla app: da qui non si può fare.",
@@ -184,7 +188,7 @@ def _guard(ctx: Context, tool: str, method: str, path: str) -> Iterator[Identity
             "La collezione è occupata (di solito una sync in corso): riprova tra 5 secondi."
         ) from None
     except HTTPException as e:
-        raise ToolError(_http_message(e)) from None
+        raise ToolError(_http_message(e, tool)) from None
     except hub.HubError as e:
         raise ToolError(str(e)) from None
 

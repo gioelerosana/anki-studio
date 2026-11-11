@@ -646,6 +646,7 @@ def test_mcp_add_notes_then_list_and_undo(mcp_client, tokens):  # noqa: F811
     assert call(mcp_client, "list_operations", {}, token=token)["structuredContent"]["operations"][0]["status"] == "undone"
     twice = call(mcp_client, "undo_operation", {"operation_id": op}, token=token)
     assert twice["isError"] and "già annullata" in text_of(twice)
+    assert "caricare o scaricare" not in text_of(twice)  # niente suggerimenti della sync fuori dalla sync
 
 
 def test_mcp_update_note_returns_the_operation_id_and_undo_restores(mcp_client, tokens):  # noqa: F811
