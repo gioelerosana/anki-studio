@@ -1,6 +1,7 @@
 /*
  * Impostazioni > Agenti: i token con cui Claude, Hermes Agent o uno script scrivono nella
- * collezione (docs/PIANO-HUB.md), più le istruzioni per collegarli.
+ * collezione (docs/PIANO-HUB.md), le loro attività recenti con «Annulla» (ActivityList) e le
+ * istruzioni per collegarli.
  *
  * Il token in chiaro esiste solo nella risposta alla creazione: lo si mostra una volta,
  * nel riquadro del dialog, e sta in uno stato locale che sparisce alla chiusura. Non va
@@ -16,6 +17,7 @@ import { formatRelative } from '../app/format';
 import { copyText } from '../app/text';
 import { useToast } from '../app/toasts';
 import { Group } from '../components/SettingsParts';
+import { ActivityList } from './ActivityList';
 import { ConfirmDialog } from '../hub/ConfirmDialog';
 import { ErrorBanner, describeError } from '../hub/errors';
 
@@ -103,7 +105,7 @@ export function AgentsSection() {
           )
         ) : tokens.length === 0 ? (
           <p className="px-4 py-4 text-xs text-muted-foreground">
-            Nessun agente collegato. Crea un token per far scrivere carte a Claude, a Hermes Agent o a uno script: le sue carte entrano subito nella collezione.
+            Nessun agente collegato. Crea un token per far scrivere carte a Claude, a Hermes Agent o a uno script: le sue carte entrano subito nella collezione, e ogni operazione si può annullare dalle attività recenti.
           </p>
         ) : (
           <ul className="divide-y">
@@ -114,10 +116,14 @@ export function AgentsSection() {
         )}
       </Group>
 
+      <Group title="Attività recenti">
+        <ActivityList />
+      </Group>
+
       <Group title="Collega Hermes Agent">
         <div className="flex flex-col gap-3 p-4">
           <p className="text-xs text-muted-foreground">
-            Nella configurazione di Hermes Agent aggiungi il server MCP sotto <code className="font-mono">mcp_servers</code> e sostituisci <code className="font-mono">&lt;token&gt;</code> con un token di un agente creato qui sopra.
+            Nella configurazione di Hermes Agent aggiungi il server MCP sotto <code className="font-mono">mcp_servers</code> e sostituisci <code className="font-mono">&lt;token&gt;</code> con un token di un agente creato qui sopra. Le carte che crea entrano subito nella collezione e nello studio, con il tag <code className="font-mono">agent::&lt;nome&gt;</code>: se qualcosa non va, annulla l’operazione dalle attività recenti.
           </p>
           <CodeBlock label="Configurazione di Hermes Agent" code={`mcp_servers:\n  anki-studio:\n    url: "${origin}/mcp"\n    headers:\n      Authorization: "Bearer <token>"`} />
         </div>
@@ -131,7 +137,7 @@ export function AgentsSection() {
             <li>Quando richiesto, accedi con Authentik: l’accesso passa da lì, senza token.</li>
           </ol>
           <CodeBlock label="URL del server MCP" code={`${origin}/mcp`} />
-          <p className="text-2xs text-muted-foreground">Le note create dall’app Claude entrano subito nella collezione, con il tag agent::claude.</p>
+          <p className="text-2xs text-muted-foreground">Le note create dall’app Claude entrano subito nella collezione, con il tag agent::claude. Ogni operazione compare nelle attività recenti, da cui si può annullare.</p>
         </div>
       </Group>
 

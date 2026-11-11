@@ -12,11 +12,12 @@
  * mai una nota che non è più sullo schermo.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, ChevronLeft, FolderInput, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
+import { Bot, ChevronLeft, FolderInput, History, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
 import { Badge, Banner, Button, Checkbox, EmptyHint, HeaderBar, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, NoteSearchItem } from '../api/types';
+import { ActivityList } from '../agents/ActivityList';
 import { formatRelative, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { isReservedTag } from '../notes/tags';
@@ -87,6 +88,8 @@ export function LibraryScreen() {
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  // Foglio «Attività degli agenti»: dove ci si accorge di una carta sbagliata si può annullare l'operazione.
+  const [activityOpen, setActivityOpen] = useState(false);
 
   // Il debounce alimenta la ricerca; Invio la anticipa.
   useEffect(() => setCommitted(debounced), [debounced]);
@@ -324,6 +327,9 @@ export function LibraryScreen() {
         }
         rightContent={
           <>
+            <IconButton label="Attività degli agenti" onClick={() => setActivityOpen(true)}>
+              <History />
+            </IconButton>
             <IconButton label="Aggiungi carta" onClick={() => navigate({ name: 'add', deckId: null })}>
               <Plus />
             </IconButton>
@@ -515,6 +521,20 @@ export function LibraryScreen() {
       {!wide && detail ? (
         <Sheet title="Nota" backLabel="Libreria" onClose={() => select(null)}>
           {detail}
+        </Sheet>
+      ) : null}
+
+      {activityOpen ? (
+        <Sheet title="Attività degli agenti" backLabel="Libreria" onClose={() => setActivityOpen(false)}>
+          <div className="overflow-hidden rounded-lg border bg-card">
+            {/* annullare cancella o ripristina note: la ricerca riparte da capo, e i tag per i filtri si rileggono */}
+            <ActivityList
+              onUndone={() => {
+                setAttempt((n) => n + 1);
+                api.tags().then(setAllTags).catch(() => {});
+              }}
+            />
+          </div>
         </Sheet>
       ) : null}
 
