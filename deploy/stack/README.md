@@ -162,8 +162,11 @@ Se i dati arrivano dal deploy di prova, il collegamento AnkiWeb c'è già
 ## Collegare gli agenti (Claude e Hermes)
 
 Anki Studio ha un server MCP (`https://anki.jshep.xyz/mcp`, stesso container, stesso processo)
-con cui gli agenti creano flashcard: arrivano come **bozze** nell'Inbox della PWA, le approvi
-tu, poi viaggiano su AnkiWeb con la sync. Il disegno e gli strumenti sono in
+con cui gli agenti creano flashcard: entrano **subito** nella collezione (note normali e
+attive, niente bozze da approvare) e poi viaggiano su AnkiWeb con la sync. Ogni loro operazione
+finisce in un **diario** (`agent-ops.json` nel volume dati: ultime 200 e 30 giorni) e la annulli
+dalla PWA (attività degli agenti) o l'agente stesso con `undo_operation`: cancella le note create e
+rimette quelle aggiornate com'erano, ma salta ciò che hai modificato o studiato nel frattempo. Il disegno e gli strumenti sono in
 [`docs/PIANO-HUB.md`](../../docs/PIANO-HUB.md). Ci sono due modi per entrare, con gli stessi
 permessi dell'utente:
 
@@ -274,13 +277,12 @@ curl -sN https://anki.jshep.xyz/mcp -H 'Authorization: Bearer ask_…' -H 'conte
    Connectors → Anki Studio puoi bloccare i singoli strumenti.
 
 Le impostazioni di autenticazione non si cambiano dopo averlo aggiunto: se ruoti il secret su
-Authentik, rimuovi il connettore e aggiungilo di nuovo. Le note create da Claude nascono bozza
-(`ANKI_MCP_OAUTH_REVIEW=true`) con il tag `agent::claude`.
+Authentik, rimuovi il connettore e aggiungilo di nuovo. Le note create da Claude hanno il tag
+`agent::claude` (la provenienza) e il loro diario è quello dell'agente `claude`.
 
 ### D. Hermes Agent (e altri client con Bearer)
 
-1. Nella PWA: **Impostazioni → Agenti**, crea un token (nome `hermes`, scope `write`, bozze
-   attive, cioè `review`). Il token `ask_…` si vede una volta sola: copialo subito.
+1. Nella PWA: **Impostazioni → Agenti**, crea un token (nome `hermes`, scope `write`). Il token `ask_…` si vede una volta sola: copialo subito.
 2. Nella configurazione di Hermes (`~/.hermes/config.yaml`, nel container di myserv
    `/opt/data/config.yaml`: da controllare) aggiungi il server HTTP sotto `mcp_servers`
    (formato dalla [documentazione di Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)):
@@ -320,16 +322,19 @@ nella query string.
 | **`401` da Hermes o da uno script** | Header senza `Bearer `, token copiato male, token **revocato** nella PWA (Impostazioni → Agenti), oppure URL con redirect. Dopo troppi tentativi sbagliati il backend risponde `429`: aspetta. Dopo aver cambiato il token, `/reload-mcp`. |
 | **`403`** | Il token ha scope `read`, o prova a modificare una nota che non porta il suo tag `agent::<nome>`. |
 | **«Unexpected error while invoking tool»** | Il connettore è collegato ma lo strumento ha fallito: `docker logs anki-studio --tail 50` (log JSON, senza segreti). |
-| **Le carte create non compaiono nello studio** | Sono bozze (carte sospese): approvale dall'Inbox. Dopo l'approvazione la sync con AnkiWeb parte entro `ANKI_SYNC_AFTER_WRITE_SECONDS` (30 s); `0` la spegne. |
+| **Le carte create non compaiono su un altro dispositivo** | Le carte entrano subito nello studio qui; sugli altri dispositivi arrivano con la sync con AnkiWeb, che parte entro `ANKI_SYNC_AFTER_WRITE_SECONDS` (30 s; `0` la spegne). Controlla `GET /api/sync` (AnkiWeb collegato? conflitto?). |
+| **L'agente ha sbagliato qualcosa** | Annulla l'operazione dalla PWA (attività degli agenti) o chiedi all'agente `list_operations` e `undo_operation`. Le note che hai modificato o studiato dopo vengono saltate (con il motivo) e l'operazione resta «parziale». Non annulla i media caricati né la sync. |
 
 ### F. Sicurezza
 
 - I token `ask_…` e l'accesso OAuth sono **dell'utente**: chi li ha scrive nella tua
-  collezione. Un token ha nome, scope e `review`, si vede l'ultimo uso e si revoca dalla PWA.
-  Per Claude con OAuth lo scope è `write` con bozze obbligatorie.
-- Gli agenti **non hanno strumenti distruttivi**: niente cancellazione, approvazione delle
-  bozze, sync completa o modifica dei tipi di nota. Cancellare e approvare sono gesti tuoi
-  nella PWA, con conferma (regola 1 di `AGENTS.md`).
+  collezione. Un token ha nome e scope, si vede l'ultimo uso e si revoca dalla PWA. Per Claude
+  con OAuth lo scope è `write`.
+- Gli agenti **non hanno strumenti distruttivi**: niente cancellazione di note, sync completa o
+  modifica dei tipi di nota. Cancellare è un gesto tuo nella PWA, con conferma (regola 1 di
+  `AGENTS.md`). L'unica eccezione è `undo_operation`, che annulla solo ciò che l'agente stesso ha
+  fatto (e registrato nel diario) e salta ciò che hai toccato tu. Il diario non è il backup
+  della collezione: per quello ci sono i backup del volume dati.
 - Il testo che un agente legge dalla collezione (`search_notes`, `get_note`) è dato non fidato
   (può contenere istruzioni): in Claude non scegliere "Always allow" se non ti fidi, e blocca
   gli strumenti che non ti servono.
@@ -362,7 +367,7 @@ docker run --rm --network none --user 0 \
 docker run --rm --network none -v /home/ubuntu/stack/anki-studio/data:/d:ro --entrypoint python "$IMG" -c \
   "import sqlite3; print(sqlite3.connect('file:/d/collection.anki2?mode=ro', uri=True).execute('pragma integrity_check').fetchone())"
 # → ('ok',)
-sudo ls -la /home/ubuntu/stack/anki-studio/data   # collection.anki2, collection.media/, .media.db2, sync_auth.json, backups/
+sudo ls -la /home/ubuntu/stack/anki-studio/data   # collection.anki2, collection.media/, .media.db2, sync_auth.json, tokens.json, agent-ops.json, backups/
 ```
 
 Poi i passi 4-6 sopra. **Non riavviare il deploy di prova** dopo la migrazione: due copie della

@@ -48,8 +48,6 @@ services:
             - ANKI_MCP_ENABLED=true
             - ANKI_MCP_OIDC_ISSUER=https://auth.jshep.xyz/application/o/anki-studio-mcp/
             - ANKI_MCP_OIDC_CLIENT_ID=anki-studio-mcp
-            # Le note create da Claude via OAuth nascono come bozze (Inbox della PWA).
-            - ANKI_MCP_OAUTH_REVIEW=true
             # Sync con AnkiWeb N secondi dopo una scrittura da agente (0 = spenta).
             - ANKI_SYNC_AFTER_WRITE_SECONDS=30
             # Sync automatica con AnkiWeb ogni N minuti, oltre a quella all'avvio e allo stop.
