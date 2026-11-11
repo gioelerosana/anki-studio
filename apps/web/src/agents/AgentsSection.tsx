@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, Check, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
-import { Badge, Banner, Button, Field, IconButton, Input, Modal, SegmentedControl, Spinner, Switch } from '@anki-studio/ui-kit';
+import { Badge, Banner, Button, Field, IconButton, Input, Modal, SegmentedControl, Spinner } from '@anki-studio/ui-kit';
 import { api } from '../api/client';
 import type { ApiToken, ApiTokenCreated, TokenScope } from '../api/types';
 import { formatRelative } from '../app/format';
@@ -103,7 +103,7 @@ export function AgentsSection() {
           )
         ) : tokens.length === 0 ? (
           <p className="px-4 py-4 text-xs text-muted-foreground">
-            Nessun agente collegato. Crea un token per far scrivere carte a Claude, a Hermes Agent o a uno script: le sue note possono arrivare come bozze da approvare nell’Inbox.
+            Nessun agente collegato. Crea un token per far scrivere carte a Claude, a Hermes Agent o a uno script: le sue carte entrano subito nella collezione.
           </p>
         ) : (
           <ul className="divide-y">
@@ -131,7 +131,7 @@ export function AgentsSection() {
             <li>Quando richiesto, accedi con Authentik: l’accesso passa da lì, senza token.</li>
           </ol>
           <CodeBlock label="URL del server MCP" code={`${origin}/mcp`} />
-          <p className="text-2xs text-muted-foreground">Le note create dall’app Claude arrivano come bozze nell’Inbox.</p>
+          <p className="text-2xs text-muted-foreground">Le note create dall’app Claude entrano subito nella collezione, con il tag agent::claude.</p>
         </div>
       </Group>
 
@@ -173,7 +173,6 @@ function TokenRow({ token, onEdit, onRevoke }: { token: ApiToken; onEdit: () => 
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="truncate text-sm font-medium">{token.name}</span>
           <Badge variant="secondary">{token.scope === 'write' ? 'Scrittura' : 'Sola lettura'}</Badge>
-          {token.scope === 'write' ? <Badge variant={token.review ? 'info' : 'outline'}>{token.review ? 'Bozze' : 'Dirette'}</Badge> : null}
         </div>
         <span className="text-2xs text-muted-foreground">
           Creato {formatRelative(token.created_at)} · {token.last_used_at ? `ultimo uso ${formatRelative(token.last_used_at)}` : 'mai usato'}
@@ -191,41 +190,17 @@ function TokenRow({ token, onEdit, onRevoke }: { token: ApiToken; onEdit: () => 
   );
 }
 
-function ScopeFields({
-  scope,
-  review,
-  onScope,
-  onReview,
-}: {
-  scope: TokenScope;
-  review: boolean;
-  onScope: (s: TokenScope) => void;
-  onReview: (r: boolean) => void;
-}) {
+function ScopeFields({ scope, onScope }: { scope: TokenScope; onScope: (s: TokenScope) => void }) {
   return (
-    <>
-      <Field label="Cosa può fare" hint={SCOPE_HINT[scope]}>
-        <SegmentedControl items={SCOPE_ITEMS} activeId={scope} onChange={onScope} aria-label="Scope del token" className="self-start" />
-      </Field>
-      <div className="flex flex-col gap-1">
-        <Switch
-          checked={review}
-          onCheckedChange={onReview}
-          disabled={scope === 'read'}
-          label="Le sue note arrivano come bozze"
-        />
-        <span className="pl-11 text-2xs text-muted-foreground">
-          {scope === 'read' ? 'Un agente in sola lettura non crea note.' : 'Le carte restano sospese nell’Inbox finché non le approvi.'}
-        </span>
-      </div>
-    </>
+    <Field label="Cosa può fare" hint={SCOPE_HINT[scope]}>
+      <SegmentedControl items={SCOPE_ITEMS} activeId={scope} onChange={onScope} aria-label="Scope del token" className="self-start" />
+    </Field>
   );
 }
 
 function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('');
   const [scope, setScope] = useState<TokenScope>('write');
-  const [review, setReview] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
   // Il token in chiaro vive solo qui, finché il dialog è aperto.
@@ -235,7 +210,6 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
     if (!isOpen) {
       setName('');
       setScope('write');
-      setReview(true);
       setError(null);
       setCreated(null);
     }
@@ -248,7 +222,7 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
     setSaving(true);
     setError(null);
     try {
-      setCreated(await api.createToken({ name: name.trim(), scope, review: scope === 'write' ? review : false }));
+      setCreated(await api.createToken({ name: name.trim(), scope }));
       onCreated();
     } catch (err) {
       setError(err);
@@ -308,7 +282,7 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
         <Field label="Nome" hint={slug ? `Le sue note avranno il tag agent::${slug}` : name.trim() ? 'Serve almeno una lettera o un numero (a-z, 0-9)' : 'Lettere, numeri e trattini'}>
           <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} size="lg" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} inputClassName="coarse:text-base" />
         </Field>
-        <ScopeFields scope={scope} review={review} onScope={setScope} onReview={setReview} />
+        <ScopeFields scope={scope} onScope={setScope} />
         {/* invio da tastiera nel campo nome */}
         <button type="submit" hidden />
       </form>
@@ -318,14 +292,12 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
 
 function EditTokenDialog({ token, onClose, onSaved }: { token: ApiToken | null; onClose: () => void; onSaved: () => void }) {
   const [scope, setScope] = useState<TokenScope>('write');
-  const [review, setReview] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     if (token) {
       setScope(token.scope);
-      setReview(token.review);
       setError(null);
     }
   }, [token]);
@@ -335,7 +307,7 @@ function EditTokenDialog({ token, onClose, onSaved }: { token: ApiToken | null; 
     setSaving(true);
     setError(null);
     try {
-      await api.updateToken(token.id, { scope, review });
+      await api.updateToken(token.id, { scope });
       onSaved();
     } catch (err) {
       setError(err);
@@ -344,7 +316,7 @@ function EditTokenDialog({ token, onClose, onSaved }: { token: ApiToken | null; 
     }
   }
 
-  const dirty = !!token && (scope !== token.scope || review !== token.review);
+  const dirty = !!token && (scope !== token.scope);
 
   return (
     <Modal
@@ -366,7 +338,7 @@ function EditTokenDialog({ token, onClose, onSaved }: { token: ApiToken | null; 
     >
       <div className="flex flex-col gap-4">
         {error ? <Banner variant="error">{describeError(error).message}</Banner> : null}
-        <ScopeFields scope={scope} review={review} onScope={setScope} onReview={setReview} />
+        <ScopeFields scope={scope} onScope={setScope} />
       </div>
     </Modal>
   );

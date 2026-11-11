@@ -96,8 +96,8 @@ export function NoteFields({
 }
 
 /**
- * Tag modificabili in un campo di testo; quelli riservati dell'hub (`hub::bozza`, `agent::…`,
- * `ext::…`) stanno sotto come etichette bloccate, senza «x», e non si possono digitare.
+ * Tag modificabili in un campo di testo; quelli riservati dell'hub (`agent::…`, `ext::…`)
+ * stanno sotto come etichette bloccate, senza «x», e non si possono digitare.
  */
 export function TagsInput({
   value,
@@ -115,7 +115,7 @@ export function TagsInput({
       <Field
         label="Tag"
         hint="Separati da spazi"
-        error={typedReserved.length > 0 ? `${typedReserved.join(', ')}: i tag agent::, ext:: e hub:: li gestisce l’app e non si possono aggiungere.` : undefined}
+        error={typedReserved.length > 0 ? `${typedReserved.join(', ')}: i tag agent:: ed ext:: li gestisce l’app e non si possono aggiungere.` : undefined}
       >
         <Input
           value={value}

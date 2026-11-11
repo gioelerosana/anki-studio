@@ -99,9 +99,8 @@ export function TagsDialog({
 
   const toAdd = parseTags(add);
   const toRemove = parseTags(remove);
-  // I tag dell'hub non si toccano da qui: `hub::bozza` lega la nota alle carte sospese (togliendolo
-  // restano sospese e fuori dall'Inbox: si approva o si scarta da lì), `agent::`/`ext::` sono la
-  // provenienza. Il backend risponde 422; qui lo si dice prima.
+  // `agent::` ed `ext::` sono la provenienza e l'idempotenza delle note degli agenti: non si
+  // toccano da qui. Il backend risponde 422; qui lo si dice prima.
   const reserved = [...new Set([...toAdd, ...toRemove].filter(isReservedTag))];
   return (
     <Modal
@@ -130,7 +129,7 @@ export function TagsDialog({
         {error ? <Banner variant="error">{describeError(error).message}</Banner> : null}
         {reserved.length > 0 ? (
           <Banner variant="warning">
-            {reserved.join(', ')}: i tag agent::, ext:: e hub:: li gestisce l’app (le bozze si approvano o si scartano dall’Inbox) e non si aggiungono né si tolgono da qui.
+            {reserved.join(', ')}: i tag agent:: ed ext:: li gestisce l’app e non si aggiungono né si tolgono da qui.
           </Banner>
         ) : null}
         <datalist id="library-tag-suggestions">

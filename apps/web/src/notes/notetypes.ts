@@ -1,7 +1,7 @@
 /*
  * Tipi di nota in memoria per qualche minuto.
  *
- * Perché: libreria e inbox aprono l'editor di una nota a ogni selezione, e l'elenco dei
+ * Perché: la libreria apre l'editor di una nota a ogni selezione, e l'elenco dei
  * tipi (con i campi in ordine) cambia di rado. Una richiesta per tocco sarebbe sprecata.
  */
 import { api } from '../api/client';

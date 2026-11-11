@@ -1,5 +1,5 @@
 /*
- * Hook piccoli di libreria e inbox.
+ * Hook piccoli della libreria.
  */
 import { useEffect, useState } from 'react';
 

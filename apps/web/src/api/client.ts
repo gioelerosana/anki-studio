@@ -14,10 +14,6 @@ import type {
   CardPreview,
   DeckNode,
   DeckOptions,
-  DraftApproveResult,
-  DraftDiscardResult,
-  DraftList,
-  HubSummary,
   MediaUpload,
   MediaUploadResult,
   NoteSearchResult,
@@ -134,16 +130,7 @@ export const api = {
   sync: () => request<SyncResult>('POST', '/sync'),
   fullSync: (direction: 'upload' | 'download') => request<SyncResult>('POST', '/sync/full', { direction }),
 
-  /* ---- hub: bozze degli agenti, libreria, token (docs/PIANO-HUB.md) ---- */
-  hubSummary: () => request<HubSummary>('GET', '/hub/summary'),
-  drafts: (limit = 50, offset = 0) =>
-    request<DraftList>('GET', `/hub/drafts?${new URLSearchParams({ limit: String(limit), offset: String(offset) })}`),
-  /** `expectedMod`: id nota → `modified` visto; le note cambiate nel frattempo vengono saltate (`skipped_ids`). */
-  approveDrafts: (noteIds: number[], expectedMod?: Record<number, number>) =>
-    request<DraftApproveResult>('POST', '/hub/drafts/approve', { note_ids: noteIds, expected_mod: expectedMod }),
-  /** Cancella le bozze scelte (solo quelle: mai note normali). Chiedi sempre conferma prima. */
-  discardDrafts: (noteIds: number[], expectedMod?: Record<number, number>) =>
-    request<DraftDiscardResult>('POST', '/hub/drafts/discard', { note_ids: noteIds, expected_mod: expectedMod }),
+  /* ---- hub: libreria, token, diario delle operazioni degli agenti (docs/PIANO-HUB.md) ---- */
   cardPreview: (cardId: number) => request<CardPreview>('GET', `/cards/${cardId}/preview`),
   moveNote: (id: number, deckId: number) => request<Note>('POST', `/notes/${id}/move`, { deck_id: deckId }),
   /** Cancella la nota con le sue carte. Solo dalla sessione della PWA; chiedi sempre conferma. */
@@ -156,9 +143,9 @@ export const api = {
 
   /** Token per gli agenti (solo dalla sessione). Il token in chiaro si vede alla creazione e basta. */
   tokens: () => request<ApiToken[]>('GET', '/tokens'),
-  createToken: (input: { name: string; scope?: TokenScope; review?: boolean }) =>
+  createToken: (input: { name: string; scope?: TokenScope }) =>
     request<ApiTokenCreated>('POST', '/tokens', input),
-  updateToken: (id: string, patch: { scope?: TokenScope; review?: boolean }) =>
+  updateToken: (id: string, patch: { scope?: TokenScope }) =>
     request<ApiToken>('PATCH', `/tokens/${id}`, patch),
   deleteToken: (id: string) => request<void>('DELETE', `/tokens/${id}`),
 };

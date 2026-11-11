@@ -255,50 +255,13 @@ export interface AuthLogout {
   logout_url: string | null;
 }
 
-/* ---- hub: creazione da agenti, bozze, libreria, token (specchio di schemas.py, docs/PIANO-HUB.md) ---- */
-
-export interface HubSummary {
-  /** Note in bozza da approvare (badge). */
-  drafts: number;
-}
-
-export interface DraftNote {
-  id: number;
-  notetype_id: number;
-  notetype_name: string;
-  fields: Record<string, string>;
-  tags: string[];
-  deck_name: string | null;
-  card_ids: number[];
-  /** Nome dell'agente dal tag `agent::<nome>`. */
-  agent: string | null;
-  /** Secondi epoch. */
-  created: number;
-  /** Ultima modifica, secondi epoch: si rimanda in `expected_mod` per approvare/scartare ciò che si è visto. */
-  modified: number;
-}
-
-export interface DraftList {
-  total: number;
-  notes: DraftNote[];
-}
-
-export interface DraftApproveResult {
-  approved: number;
-  /** Note saltate: cambiate dopo che l'utente le ha viste, o non più bozze. */
-  skipped_ids: number[];
-}
-
-export interface DraftDiscardResult {
-  discarded: number;
-  skipped_ids: number[];
-}
+/* ---- hub: creazione da agenti, libreria, token, diario delle operazioni (specchio di schemas.py, docs/PIANO-HUB.md) ---- */
 
 export interface NoteTagsResult {
   updated: number;
 }
 
-/** Una carta fuori dallo studio (libreria, bozze): vale anche per le carte sospese. */
+/** Una carta fuori dallo studio (libreria): vale anche per le carte sospese. */
 export interface CardPreview {
   card_id: number;
   note_id: number;
@@ -320,8 +283,6 @@ export interface ApiToken {
   id: string;
   name: string;
   scope: TokenScope;
-  /** Le note create da questo token arrivano come bozze. */
-  review: boolean;
   /** Secondi epoch. */
   created_at: number;
   last_used_at: number | null;

@@ -1,5 +1,5 @@
 /*
- * Errori di rete e dell'API mostrati in modo uniforme da libreria, inbox e agenti.
+ * Errori di rete e dell'API mostrati in modo uniforme da libreria e agenti.
  *
  * Il 503 è un caso a parte: il backend lo risponde mentre una sync tiene occupata la
  * collezione (Retry-After 5 s). Non è un guasto, basta riprovare: l'avviso lo dice e

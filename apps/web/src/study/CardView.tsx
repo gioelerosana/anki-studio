@@ -110,6 +110,6 @@ export function CardView({ html, css, cardClass, dark, onTap, onPlay, className 
 
   // `contain: paint` + `isolation` in linea (e non nel CSS dello shadow root, che il tipo di nota
   // può sovrascrivere): un `position: fixed` o uno z-index enorme nella carta restano dentro il
-  // suo riquadro, così un'anteprima di una bozza non può coprire i pulsanti «Approva» e «Scarta».
+  // suo riquadro, così un'anteprima nella libreria non può coprire i pulsanti della vista.
   return <div ref={hostRef} className={className} style={CONTAINED} />;
 }

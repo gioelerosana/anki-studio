@@ -1,9 +1,8 @@
 /*
- * Anteprima di una carta fuori dallo studio (libreria, inbox).
+ * Anteprima di una carta fuori dallo studio (libreria).
  *
- * Usa `GET /cards/{id}/preview`, che risponde anche per le carte sospese (le bozze lo
- * sono). La carta è isolata nello Shadow DOM di `CardView` come nello studio: il CSS del
- * tipo di nota non tocca l'app. Qui nessun scheduler: solo domanda e risposta, con il tap
+ * Usa `GET /cards/{id}/preview`, che risponde anche per le carte sospese. La carta è isolata nello
+ * Shadow DOM di `CardView` come nello studio: il CSS del tipo di nota non tocca l'app. Qui nessun scheduler: solo domanda e risposta, con il tap
  * sulla carta per girarla e i pulsanti audio già gestiti da `study/audio.ts`.
  */
 import { useEffect, useState } from 'react';

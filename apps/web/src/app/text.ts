@@ -1,5 +1,5 @@
 /*
- * Piccole utilità sul testo condivise da libreria, inbox e impostazioni.
+ * Piccole utilità sul testo condivise da libreria e impostazioni.
  */
 
 /**

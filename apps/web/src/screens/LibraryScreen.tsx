@@ -2,7 +2,7 @@
  * Libreria: cerca, rivedi e sistema le note della collezione.
  *
  * La ricerca è quella di Anki (`deck:… tag:… is:suspended`): il campo accetta la sintassi
- * intera e i filtri rapidi (mazzo, tag, agente, bozze, sospese) non fanno che comporne i
+ * intera e i filtri rapidi (mazzo, tag, agente, sospese) non fanno che comporne i
  * pezzi, così chi sa la sintassi la usa e chi no ha i menu. Il backend risponde a pagine,
  * dalla nota modificata più di recente.
  *
@@ -12,7 +12,7 @@
  * mai una nota che non è più sullo schermo.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, ChevronLeft, FolderInput, Inbox, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
+import { Bot, ChevronLeft, FolderInput, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
 import { Badge, Banner, Button, Checkbox, EmptyHint, HeaderBar, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import { flattenDecks } from '../api/decks';
@@ -33,18 +33,16 @@ import { useActiveNote } from '../hub/useActiveNote';
 const PAGE = 50;
 /** Tetto del backend per una pagina (`_MAX_LIMIT` in routers/browse.py). */
 const MAX_PAGE = 200;
-const DRAFT_TAG = 'hub::bozza';
 const AGENT_PREFIX = 'agent::';
 
 interface Filters {
   deck: string;
   tag: string;
   agent: string;
-  drafts: boolean;
   suspended: boolean;
 }
 
-const NO_FILTERS: Filters = { deck: '', tag: '', agent: '', drafts: false, suspended: false };
+const NO_FILTERS: Filters = { deck: '', tag: '', agent: '', suspended: false };
 
 /** I pezzi dei filtri vanno in coda al testo digitato: Anki li mette in AND. */
 function buildQuery(text: string, f: Filters): string {
@@ -52,12 +50,10 @@ function buildQuery(text: string, f: Filters): string {
   if (f.deck) parts.push(searchTerm('deck', f.deck));
   if (f.tag) parts.push(searchTerm('tag', f.tag));
   if (f.agent) parts.push(searchTerm('tag', `${AGENT_PREFIX}${f.agent}`));
-  if (f.drafts) parts.push(searchTerm('tag', DRAFT_TAG));
   if (f.suspended) parts.push('is:suspended');
   return parts.filter(Boolean).join(' ');
 }
 
-const isDraft = (item: NoteSearchItem) => item.tags.some((t) => t.toLowerCase() === DRAFT_TAG);
 const agentOf = (item: NoteSearchItem) => item.tags.find((t) => t.toLowerCase().startsWith(AGENT_PREFIX))?.slice(AGENT_PREFIX.length) ?? null;
 
 /** Tag di sistema dell'hub: non servono come filtro per tag (gli agenti hanno il loro menu). */
@@ -328,9 +324,6 @@ export function LibraryScreen() {
         }
         rightContent={
           <>
-            <IconButton label="Inbox" onClick={() => navigate({ name: 'inbox' })}>
-              <Inbox />
-            </IconButton>
             <IconButton label="Aggiungi carta" onClick={() => navigate({ name: 'add', deckId: null })}>
               <Plus />
             </IconButton>
@@ -414,16 +407,13 @@ export function LibraryScreen() {
                   <option value="">Tutti gli agenti</option>
                   {agentOptions.map((a) => (
                     <option key={a} value={a}>
-                      Agente: {a}
+                      Creata da {a}
                     </option>
                   ))}
                 </Select>
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" active={filters.drafts} aria-pressed={filters.drafts} onClick={() => setFilters((f) => ({ ...f, drafts: !f.drafts }))} className="coarse:h-9">
-                Solo bozze
-              </Button>
               <Button size="sm" variant="outline" active={filters.suspended} aria-pressed={filters.suspended} onClick={() => setFilters((f) => ({ ...f, suspended: !f.suspended }))} className="coarse:h-9">
                 Solo sospese
               </Button>
@@ -556,10 +546,9 @@ function ItemHeader({ item }: { item: NoteSearchItem }) {
         {item.deck_name ? ` · ${item.deck_name.replaceAll('::', ' › ')}` : ''} · modificata {formatRelative(item.modified)}
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
-        {isDraft(item) ? <Badge variant="warning">Bozza</Badge> : null}
         {agent ? (
           <Badge variant="outline" icon={<Bot />}>
-            {agent}
+            Creata da {agent}
           </Badge>
         ) : null}
         {shown.map((t) => (
@@ -568,7 +557,6 @@ function ItemHeader({ item }: { item: NoteSearchItem }) {
           </Badge>
         ))}
       </div>
-      {isDraft(item) ? <p className="text-2xs text-muted-foreground">Le sue carte sono sospese finché non la approvi dall’Inbox.</p> : null}
     </div>
   );
 }
@@ -607,9 +595,8 @@ function NoteRow({
       >
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm">{plainTitle(item.sort_field) || '(senza testo)'}</span>
-          {isDraft(item) ? <Badge variant="warning" size="sm">Bozza</Badge> : null}
           {agent ? (
-            <Badge variant="outline" size="sm" icon={<Bot />} className="max-w-28 truncate">
+            <Badge variant="outline" size="sm" icon={<Bot />} title={`Creata da ${agent}`} className="max-w-28 truncate">
               {agent}
             </Badge>
           ) : null}

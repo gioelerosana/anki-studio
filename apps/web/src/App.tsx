@@ -1,13 +1,12 @@
 /*
  * Shell dell'app: prima l'accesso con Authentik (app/auth.tsx), poi le schermate
- * scelte dall'hash (app/route.ts): mazzi, studio, aggiungi, libreria, inbox, impostazioni, telecomando.
+ * scelte dall'hash (app/route.ts): mazzi, studio, aggiungi, libreria, impostazioni, telecomando.
  */
 import { AuthGate } from './app/auth';
 import { useRoute, type Route } from './app/route';
 import { ToastProvider } from './app/toasts';
 import { AddScreen } from './screens/AddScreen';
 import { DecksScreen } from './screens/DecksScreen';
-import { InboxScreen } from './screens/InboxScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { RemoteScreen } from './screens/RemoteScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -61,8 +60,6 @@ function Screen({ route }: { route: Route }) {
       return <RemoteScreen />;
     case 'library':
       return <LibraryScreen />;
-    case 'inbox':
-      return <InboxScreen />;
     default:
       return <DecksScreen />;
   }

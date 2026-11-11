@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Cloud, CloudAlert, CloudOff, Gamepad2, Inbox, Layers, Library, Plus, Settings } from 'lucide-react';
-import { Badge, Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
+import { ChevronRight, Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Library, Plus, Settings } from 'lucide-react';
+import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { DeckList } from '../components/DeckList';
-import { useHubSummary } from '../hub/useHubSummary';
 import { primeAudio } from '../study/audio';
 import { useSync } from '../sync/SyncProvider';
 
@@ -15,8 +14,6 @@ export function DecksScreen() {
   const [decks, setDecks] = useState<DeckNode[] | null>(null);
   const [today, setToday] = useState<TodayStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Bozze da approvare: se la rotta non risponde il numero sparisce in silenzio.
-  const { drafts } = useHubSummary();
 
   const load = useCallback(async () => {
     try {
@@ -87,16 +84,9 @@ export function DecksScreen() {
               {error}
             </Banner>
           ) : null}
-          {/* Libreria e Inbox (docs/PIANO-HUB.md): le carte create dagli agenti arrivano come bozze. */}
-          <nav aria-label="Libreria e inbox" className="mb-4 grid grid-cols-2 gap-2 max-[380px]:grid-cols-1">
-            <HubLink icon={<Library />} title="Libreria" hint="Cerca e sistema le note" onClick={() => navigate({ name: 'library' })} />
-            <HubLink
-              icon={<Inbox />}
-              title="Inbox"
-              hint={drafts ? 'Bozze da approvare' : 'Carte degli agenti'}
-              badge={drafts ? drafts : undefined}
-              onClick={() => navigate({ name: 'inbox' })}
-            />
+          {/* Libreria (docs/PIANO-HUB.md): le carte create dagli agenti entrano subito, qui si cercano e si sistemano. */}
+          <nav aria-label="Libreria" className="mb-4">
+            <HubLink icon={<Library />} title="Libreria" hint="Cerca e sistema le note, anche quelle degli agenti" onClick={() => navigate({ name: 'library' })} />
           </nav>
           {decks === null ? (
             error ? null : (
@@ -137,38 +127,19 @@ export function DecksScreen() {
   );
 }
 
-function HubLink({
-  icon,
-  title,
-  hint,
-  badge,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  hint: string;
-  badge?: number;
-  onClick: () => void;
-}) {
+function HubLink({ icon, title, hint, onClick }: { icon: React.ReactNode; title: string; hint: string; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={badge ? `${title}, ${badge} ${badge === 1 ? 'bozza' : 'bozze'} da approvare` : title}
-      className="flex min-h-14 items-center gap-3 rounded-lg border bg-card p-3 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="flex min-h-14 w-full items-center gap-3 rounded-lg border bg-card p-3 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground [&_svg]:size-4">{icon}</span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="text-sm font-medium">{title}</span>
         <span className="truncate text-2xs text-muted-foreground">{hint}</span>
       </span>
-      {badge ? (
-        <Badge variant="info" size="lg" className="font-mono tabular-nums" aria-hidden>
-          {badge > 99 ? '99+' : badge}
-        </Badge>
-      ) : (
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-      )}
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
     </button>
   );
 }

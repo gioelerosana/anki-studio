@@ -1,6 +1,6 @@
 /*
  * Stato di modifica di una nota (campi + tag), condiviso da «Modifica nota» nello studio,
- * dalla libreria e dall'inbox. Carica nota e tipo di nota, tiene i valori in modifica e
+ * e dalla libreria. Carica nota e tipo di nota, tiene i valori in modifica e
  * salva con `PATCH /notes/{id}`; il contenuto resta HTML grezzo come in Anki.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -17,7 +17,7 @@ export interface NoteEditor {
   values: Record<string, string>;
   /** Solo i tag modificabili, separati da spazi (i riservati non ci sono). */
   tags: string;
-  /** Tag riservati della nota (`hub::bozza`, `agent::…`, `ext::…`): si mostrano, non si toccano. */
+  /** Tag riservati della nota (`agent::…`, `ext::…`): si mostrano, non si toccano. */
   reservedTags: string[];
   /** Tag riservati digitati nel campo: il salvataggio resta bloccato finché non li si toglie. */
   typedReserved: string[];
