@@ -28,13 +28,13 @@ MATRIX = {
     ("GET", "/api/tags"): READ,
     ("GET", "/api/notes/{note_id}"): READ,
     ("GET", "/api/cards/{card_id}/preview"): READ,
-    ("GET", "/api/hub/summary"): READ,
-    ("GET", "/api/hub/drafts"): READ,
+    ("GET", "/api/hub/operations"): READ,
     ("GET", "/api/sync"): READ,
     ("POST", "/api/hub/notes/batch"): WRITE,
     ("POST", "/api/hub/decks"): WRITE,
     ("POST", "/api/sync"): WRITE,
     ("POST", "/api/media"): WRITE,
+    ("POST", "/api/hub/operations/{operation_id}/undo"): WRITE,
     ("PATCH", "/api/notes/{note_id}"): WRITE,
     # tutto il resto è riservato all'utente
     ("GET", "/api/stats"): ADMIN,
@@ -57,8 +57,6 @@ MATRIX = {
     ("POST", "/api/sync/login"): ADMIN,
     ("POST", "/api/sync/logout"): ADMIN,
     ("POST", "/api/sync/full"): ADMIN,
-    ("POST", "/api/hub/drafts/approve"): ADMIN,
-    ("POST", "/api/hub/drafts/discard"): ADMIN,
     ("GET", "/api/tokens"): ADMIN,
     ("POST", "/api/tokens"): ADMIN,
     ("PATCH", "/api/tokens/{token_id}"): ADMIN,
@@ -118,7 +116,7 @@ def test_every_api_route_is_classified(routes):
     )
     stale = set(MATRIX) - seen
     assert not stale, f"Voci della matrice senza rotta: {sorted(stale)}"
-    assert len(seen) >= 45  # se il giro sulle rotte si rompe non deve passare "a vuoto"
+    assert len(seen) >= 42  # se il giro sulle rotte si rompe non deve passare "a vuoto"
 
 
 def test_only_the_public_routes_skip_require_auth(routes):

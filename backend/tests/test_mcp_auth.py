@@ -216,12 +216,12 @@ def test_mcp_oauth_settings_are_validated(seeded):
 def test_valid_jwt_authenticates_as_claude(oauth_client, idp):
     token = idp.token()
     r, msg = jwt_rpc(oauth_client, token)
-    assert r.status_code == 200 and len(msg["result"]["tools"]) == 10
-    # identità: scope write, review acceso di default, agente `claude`
+    assert r.status_code == 200 and len(msg["result"]["tools"]) == 12
+    # identità: scope write, agente `claude`; le note entrano subito, normali
     out = tool_with_jwt(oauth_client, token, "add_notes", {"notes": [note_args("oauth", external_id="o-1")]})["structuredContent"]
-    assert out["draft"] is True and out["created"] == 1
+    assert out["created"] == 1 and out["operation_id"]
     note = tool_with_jwt(oauth_client, token, "get_note", {"note_id": out["results"][0]["note_id"]})["structuredContent"]
-    assert {"agent::claude", "hub::bozza", "ext::o-1"} <= set(note["tags"])
+    assert set(note["tags"]) == {"agent::claude", "ext::o-1"}
     # il JWKS si scarica una volta sola, poi è in cache
     assert idp.requests == [DISCOVERY, JWKS_URI]
     # può modificare le proprie note ma non le altre
@@ -233,10 +233,13 @@ def test_valid_jwt_authenticates_as_claude(oauth_client, idp):
     assert not tool_with_jwt(oauth_client, token, "create_deck", {"name": "Da Claude"})["isError"]
 
 
-def test_oauth_review_can_be_turned_off(seeded, idp):
-    with make_client(seeded, anki_mcp_oauth_review=False) as c:
-        out = tool_with_jwt(c, idp.token(), "add_notes", {"notes": [note_args("libera")]})["structuredContent"]
-        assert out["draft"] is False
+def test_oauth_operations_are_journaled_and_undoable(oauth_client, idp):
+    token = idp.token()
+    out = tool_with_jwt(oauth_client, token, "add_notes", {"notes": [note_args("annulla")]})["structuredContent"]
+    ops = tool_with_jwt(oauth_client, token, "list_operations")["structuredContent"]["operations"]
+    assert [o["id"] for o in ops] == [out["operation_id"]] and ops[0]["agent"] == "claude"
+    undone = tool_with_jwt(oauth_client, token, "undo_operation", {"operation_id": out["operation_id"]})
+    assert undone["structuredContent"]["status"] == "undone" and undone["structuredContent"]["deleted"] == 1
 
 
 def test_oauth_identity_is_not_valid_on_the_rest_api(oauth_client, idp):

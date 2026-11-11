@@ -591,7 +591,7 @@ def test_agent_notes_reach_the_desktop_without_a_manual_sync(server, make_app, d
     e il desktop la riceve; più scritture ravvicinate fanno una sola sync."""
     app = make_app(endpoint=server.endpoint, seed=True, anki_sync_after_write_seconds=1)
     _initial(app, desktop)
-    token = app.c.post("/api/tokens", json={"name": "claude", "review": True}).json()["token"]
+    token = app.c.post("/api/tokens", json={"name": "claude"}).json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
     for i in range(3):
         r = app.c.post(
@@ -627,6 +627,6 @@ def test_agent_notes_reach_the_desktop_without_a_manual_sync(server, make_app, d
     ids = desktop.col.find_notes("tag:agent::claude")
     assert len(ids) == 3
     note = desktop.col.get_note(ids[0])
-    # arrivano come bozze: con tag e carte sospese anche sull'altro dispositivo
-    assert "hub::bozza" in note.tags and any("ext::agente-" in t for t in note.tags)
-    assert all(desktop.col.get_card(c).queue == -1 for c in note.card_ids())
+    # arrivano come note normali, con la provenienza, e le carte sono attive anche sull'altro dispositivo
+    assert any("ext::agente-" in t for t in note.tags)
+    assert all(desktop.col.get_card(c).queue == 0 for c in note.card_ids())

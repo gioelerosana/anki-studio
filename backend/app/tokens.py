@@ -5,7 +5,8 @@ Sul disco resta solo l'hash SHA-256 (`<data>/tokens.json`, 0600, scrittura atomi
 può recuperare. Un hash veloce basta perché il token è casuale a 256 bit, non una
 password scelta da una persona: non c'è niente da "indovinare" a forza bruta.
 
-Ogni token ha un `scope` (`read` | `write`) e `review` (le sue note nascono bozza).
+Ogni token ha un `scope` (`read` | `write`). Un file scritto da una versione più vecchia, con
+il campo `review` (le bozze, eliminate), si legge lo stesso: i campi in più si ignorano.
 Il nome diventa lo slug del tag di provenienza `agent::<slug>`, per questo gli slug
 sono unici e il nome non si cambia dopo la creazione.
 """
@@ -64,7 +65,6 @@ class StoredToken:
     id: str
     name: str
     scope: Scope
-    review: bool
     hash: str
     created_at: int
     last_used_at: int | None = None
@@ -138,7 +138,7 @@ class TokenStore:
         with self._lock:
             return next((t for t in self._tokens if t.id == token_id), None)
 
-    def create(self, name: str, scope: Scope, review: bool) -> tuple[StoredToken, str]:
+    def create(self, name: str, scope: Scope) -> tuple[StoredToken, str]:
         """Restituisce il token salvato e quello in chiaro (da mostrare una volta sola)."""
         name = name.strip()
         slug = agent_slug(name)
@@ -155,7 +155,6 @@ class TokenStore:
                 id=secrets.token_hex(6),
                 name=name,
                 scope=scope,
-                review=review,
                 hash=hash_token(plain),
                 created_at=int(time.time()),
             )
@@ -164,15 +163,13 @@ class TokenStore:
         log.info("Token creato", extra={"token_id": token.id, "agent": slug, "scope": scope})
         return token, plain
 
-    def update(self, token_id: str, *, scope: Scope | None, review: bool | None) -> StoredToken | None:
+    def update(self, token_id: str, *, scope: Scope | None) -> StoredToken | None:
         with self._lock:
             token = next((t for t in self._tokens if t.id == token_id), None)
             if token is None:
                 return None
             if scope is not None:
                 token.scope = scope
-            if review is not None:
-                token.review = review
             self._save()
             return token
 

@@ -130,7 +130,6 @@ class OAuthVerifier:
         assert settings.anki_mcp_oidc_issuer and settings.anki_mcp_oidc_client_id
         self.issuer = settings.anki_mcp_oidc_issuer
         self.client_id = settings.anki_mcp_oidc_client_id
-        self.review = settings.anki_mcp_oauth_review
         self.allowed_users = settings.allowed_users
         self.allowed_groups = settings.allowed_groups
         self._lock = threading.Lock()
@@ -273,7 +272,6 @@ class OAuthVerifier:
             kind="oauth",
             name=OAUTH_AGENT_NAME,
             scope="write",
-            review=self.review,
             username=str(username) if username else None,
         )
 

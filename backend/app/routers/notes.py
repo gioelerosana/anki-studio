@@ -5,8 +5,9 @@ from anki.consts import MODEL_CLOZE
 from anki.notes import Note, NoteFieldsCheckResult
 
 from .. import hub
+from .. import journal as jr
 from ..collection import CollectionManager
-from ..deps import get_identity, get_manager, get_sync
+from ..deps import get_identity, get_journal, get_manager, get_sync
 from ..schemas import (
     NoteIn,
     NoteMoveIn,
@@ -123,12 +124,15 @@ def update_note(
     identity: Identity = Depends(get_identity),
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
+    ops: jr.Journal = Depends(get_journal),
 ):
+    """Modifica campi e/o tag. Se cambia davvero qualcosa l'operazione finisce nel diario
+    (`app/journal.py`) e la risposta porta `operation_id`, da dare a `POST /hub/operations/{id}/undo`."""
     with manager.use() as col:
         note = _get_note(col, note_id)
         if identity.scoped:
             # un token write (o l'OAuth di /mcp) modifica solo le note che ha creato lui (tag agent::<nome>) e
-            # non può toccare i tag riservati: né togliere `hub::bozza` né cambiare la provenienza
+            # non può toccare i tag riservati: non può cambiare la provenienza né l'`external_id`
             if not (identity.agent and hub.is_own_note(note.tags, identity.agent)):
                 raise HTTPException(
                     status.HTTP_403_FORBIDDEN, "Il token può modificare solo le note create da lui"
@@ -146,19 +150,25 @@ def update_note(
                 hub.ensure_reserved_unchanged(note.tags, body.tags)
             except hub.HubError as e:
                 raise hub_http_error(e)
-        before = (list(note.fields), list(note.tags))
+        prev_fields, prev_tags = dict(note.items()), list(note.tags)
         if body.fields is not None:
             _apply_fields(note, body.fields)
         if body.tags is not None:
             note.tags = body.tags
         _check(note, allow_duplicate=True)
-        if (list(note.fields), list(note.tags)) != before:
-            # un token con `review` non può cambiare di nascosto una nota già approvata
-            hub.redraft(note, review=identity.review)
         col.update_note(note)
-        # una bozza non deve avere carte attive, nemmeno quelle nuove create da questa modifica
-        hub.suspend_draft_cards(col, note)
-        out = _note_out(note)
+        # riletta: i tag canonici e il `mod` veri, dopo la scrittura di Anki
+        fresh = col.get_note(note.id)
+        out = _note_out(fresh)
+        changed = [k for k, v in prev_fields.items() if fresh[k] != v]
+        tags_changed = prev_tags != list(fresh.tags)
+        if changed or tags_changed:
+            out.operation_id = ops.record(
+                identity.actor,
+                "update_note",
+                jr.summary_for_update(fresh.id, changed, tags_changed),
+                [jr.item_updated(fresh, {k: prev_fields[k] for k in changed}, prev_tags)],
+            )
     sync.request_soon()
     return out
 

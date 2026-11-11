@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, Request, status
 from starlette.requests import HTTPConnection
 
 from .config import Settings, get_settings
+from .journal import ADMIN_ACTOR, SESSION_ACTOR, Actor
 from .logging_setup import register_secret
 from .tokens import TOKEN_PREFIX, TokenStore, agent_slug
 
@@ -238,14 +239,12 @@ class Identity:
     """Chi sta chiamando. `session` e `admin` (il vecchio ANKI_API_TOKEN) possono tutto;
     `token` (`ask_…`) è limitato da `scope` e dalla matrice qui sotto. `oauth` è l'app Claude
     che entra su /mcp con un JWT di Authentik (app/mcp_auth.py): vale come un token `write`
-    (con `review` da ANKI_MCP_OAUTH_REVIEW) e non esiste sulle rotte REST."""
+    e non esiste sulle rotte REST."""
 
     kind: Literal["session", "admin", "token", "oauth"]
     name: str
     # admin = nessun limite (sessione e ANKI_API_TOKEN); read/write = token con scope
     scope: Literal["admin", "read", "write"] = "admin"
-    # token: le note che crea nascono bozza e non può forzare il contrario
-    review: bool = False
     username: str | None = None
     token_id: str | None = None
 
@@ -253,6 +252,14 @@ class Identity:
     def scoped(self) -> bool:
         """Limitata da scope e matrice dei permessi (token `ask_…` e OAuth di /mcp)."""
         return self.kind in ("token", "oauth")
+
+    @property
+    def actor(self) -> Actor:
+        """Come compare nel diario delle operazioni: lo slug del token, oppure «sessione» /
+        «admin». Chi ha uno scope vede e annulla solo le proprie operazioni (`Actor.scoped`)."""
+        if self.scoped:
+            return Actor(self.agent or "", scoped=True)
+        return Actor(ADMIN_ACTOR if self.kind == "admin" else SESSION_ACTOR)
 
     @property
     def agent(self) -> str | None:
@@ -274,8 +281,7 @@ _READ_ROUTES = (
     "/tags",
     r"/notes/\d+",
     r"/cards/\d+/preview",
-    "/hub/summary",
-    "/hub/drafts",
+    "/hub/operations",  # solo le proprie: lo decide la rotta
     "/sync",
 )
 _WRITE_ROUTES = (
@@ -283,6 +289,7 @@ _WRITE_ROUTES = (
     ("POST", "/hub/decks"),
     ("POST", "/sync"),
     ("POST", "/media"),
+    ("POST", r"/hub/operations/[^/]+/undo"),  # solo le proprie: lo decide la rotta
     ("PATCH", r"/notes/\d+"),  # solo note proprie, vedi sopra
 )
 _READ_RE = re.compile("|".join(f"(?:{p})" for p in _READ_ROUTES))
@@ -324,7 +331,6 @@ def match_bearer(request: HTTPConnection, token: str, settings: Settings) -> Ide
                 kind="token",
                 name=stored.name,
                 scope=stored.scope,
-                review=stored.review,
                 token_id=stored.id,
             )
     return None

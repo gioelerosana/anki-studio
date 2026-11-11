@@ -47,8 +47,6 @@ class Settings(BaseSettings):
     anki_mcp_oidc_issuer: str | None = None
     # Client ID del provider: è il valore atteso nell'`aud` dei JWT (non l'URL della risorsa)
     anki_mcp_oidc_client_id: str | None = None
-    # Le note create da Claude via OAuth nascono bozze da approvare nella PWA (consigliato)
-    anki_mcp_oauth_review: bool = True
 
     # Solo sviluppo, senza Authentik: /api/auth/login apre subito una sessione "dev".
     # Rifiutato se il processo serve anche la PWA (ANKI_WEB_DIR, cioè l'immagine Docker).
@@ -221,6 +219,11 @@ class Settings(BaseSettings):
     @property
     def tokens_path(self) -> Path:
         return self.anki_data_dir / "tokens.json"
+
+    @property
+    def journal_path(self) -> Path:
+        """Il diario delle operazioni degli agenti (app/journal.py)."""
+        return self.anki_data_dir / "agent-ops.json"
 
     @property
     def backup_dir(self) -> Path:

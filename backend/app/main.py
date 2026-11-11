@@ -14,6 +14,7 @@ from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
+from .journal import Journal
 from .logging_setup import register_secret, setup_logging
 from .routers import auth, browse, decks, hub, media, notes, study, sync, tokens as tokens_router
 from .mcp_auth import protected_resource_metadata
@@ -187,6 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
     app.state.remote = RemoteHub()
     app.state.tokens = TokenStore(settings.tokens_path)
+    app.state.journal = Journal(settings.journal_path)
     if settings.anki_mcp_enabled:
         app.state.mcp = build_mcp(app, settings)
         if not settings.mcp_oauth_enabled:

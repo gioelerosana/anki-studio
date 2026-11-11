@@ -51,8 +51,8 @@ class _StudyUndo:
     """Quali passi della pila di undo di Anki sono davvero dello studio.
 
     L'«Annulla» dello studio deve annullare solo una risposta o un'azione fatta qui, mai la
-    modifica di un agente, l'approvazione di una bozza o la selezione di un mazzo: sotto c'è una
-    pila sola, condivisa con tutto il resto. Anki non dice chi ha fatto cosa, ma `last_step`
+    modifica di un agente (o il suo annullamento dal diario, app/journal.py) o la selezione di un
+    mazzo: sotto c'è una pila sola, condivisa con tutto il resto. Anki non dice chi ha fatto cosa, ma `last_step`
     cambia a ogni operazione (anche a ogni undo). Per ogni operazione dello studio ci segniamo
     `last_step` prima e dopo; l'ultima è annullabile da qui solo se da allora `last_step` non è
     cambiato (nessun'altra operazione), e quella sotto solo se tra le due non c'è stato altro.

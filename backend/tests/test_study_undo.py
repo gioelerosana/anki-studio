@@ -80,18 +80,22 @@ def test_the_answer_after_an_agent_operation_undoes_only_itself(client, make_tok
     assert undo(client).status_code == 409
 
 
-def test_approving_or_editing_a_draft_is_not_offered(client, make_token):
-    headers, _ = make_token("hermes", review=True)
-    nid = post_batch(client, [basic("bozza")], headers=headers)["results"][0]["note_id"]
+def test_editing_or_undoing_an_agent_operation_is_not_offered(client, make_token):
+    """Né la modifica di un agente né l'annullamento dal diario compaiono come «Annulla» dello studio."""
+    headers, _ = make_token("hermes")
+    out = post_batch(client, [basic("nuova")], headers=headers)
+    nid = out["results"][0]["note_id"]
     answer(client)
-    assert client.post("/api/hub/drafts/approve", json={"note_ids": [nid]}).status_code == 200
-    assert study(client)["undo_label"] is None
-    # nemmeno la risospensione delle carte di una bozza modificata da un token con review
-    answer(client)
-    client.patch(f"/api/notes/{nid}", json={"fields": {"Back": "x"}}, headers=headers)
+    r = client.patch(f"/api/notes/{nid}", json={"fields": {"Back": "x"}}, headers=headers)
     assert study(client)["undo_label"] is None
     assert undo(client).status_code == 409
-    assert client.get("/api/hub/summary").json() == {"drafts": 1}
+    answer(client)
+    assert client.post(f"/api/hub/operations/{r.json()['operation_id']}/undo", headers=headers).status_code == 200
+    assert study(client)["undo_label"] is None
+    answer(client)
+    assert client.post(f"/api/hub/operations/{out['operation_id']}/undo", headers=headers).status_code == 200
+    assert study(client)["undo_label"] is None
+    assert undo(client).status_code == 409
 
 
 def test_study_actions_are_undoable_from_study(client):

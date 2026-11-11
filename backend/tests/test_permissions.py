@@ -25,8 +25,7 @@ def allowed_reads(ids):
         "/api/tags",
         f"/api/notes/{ids['note']}",
         f"/api/cards/{ids['card']}/preview",
-        "/api/hub/summary",
-        "/api/hub/drafts",
+        "/api/hub/operations",
         "/api/sync",
     ]
 
@@ -43,14 +42,12 @@ def forbidden_requests(ids):
         ("GET", "/api/auth/me", None),
         ("GET", "/api/tokens", None),
         # distruttive o riservate all'utente
-        ("POST", "/api/hub/drafts/approve", {"note_ids": [n]}),
-        ("POST", "/api/hub/drafts/discard", {"note_ids": [n]}),
         ("POST", f"/api/notes/{n}/move", {"deck_id": d}),
         ("DELETE", f"/api/notes/{n}", None),
         ("POST", "/api/notes/tags", {"note_ids": [n], "add": ["x"]}),
         ("POST", "/api/notes", {"deck_id": d, "notetype_id": 1, "fields": {}}),
         ("POST", "/api/tokens", {"name": "altro"}),
-        ("PATCH", "/api/tokens/abc", {"review": False}),
+        ("PATCH", "/api/tokens/abc", {"scope": "read"}),
         ("DELETE", "/api/tokens/abc", None),
         ("POST", "/api/sync/login", {"username": "a", "password": "b"}),
         ("POST", "/api/sync/logout", None),
@@ -127,7 +124,7 @@ def test_write_token_patches_only_its_own_notes(client, make_token, ids):
 
 
 def test_token_cannot_change_reserved_tags_of_its_notes(client, make_token):
-    headers, _ = make_token("claude", scope="write", review=True)
+    headers, _ = make_token("claude", scope="write")
     nid = post_batch(client, [basic("b", external_id="e")], headers=headers)["results"][0]["note_id"]
     r = client.patch(
         f"/api/notes/{nid}",
@@ -135,16 +132,16 @@ def test_token_cannot_change_reserved_tags_of_its_notes(client, make_token):
         headers=headers,
     )
     assert r.status_code == 200
-    assert set(r.json()["tags"]) == {"utile", "agent::claude", "hub::bozza", "ext::e"}
-    # nemmeno svuotando i tag si toglie lo stato di bozza o la provenienza
+    # `hub::` non è più riservato: è un tag come un altro; provenienza e id dell'invio restano com'erano
+    assert set(r.json()["tags"]) == {"utile", "agent::claude", "hub::approvata", "ext::e"}
+    # nemmeno svuotando i tag si toglie la provenienza
     r = client.patch(f"/api/notes/{nid}", json={"tags": []}, headers=headers)
-    assert set(r.json()["tags"]) == {"agent::claude", "hub::bozza", "ext::e"}
-    # la sessione/amministratore cambia i tag normali, ma nemmeno lei i riservati (422): la
-    # nota resterebbe senza `hub::bozza` con le carte sospese per sempre
+    assert set(r.json()["tags"]) == {"agent::claude", "ext::e"}
+    # la sessione/amministratore cambia i tag normali, ma nemmeno lei i riservati (422)
     r = client.patch(f"/api/notes/{nid}", json={"tags": ["solo"]})
     assert r.status_code == 422
-    r = client.patch(f"/api/notes/{nid}", json={"tags": ["solo", "agent::claude", "hub::bozza", "ext::e"]})
-    assert r.status_code == 200 and set(r.json()["tags"]) == {"solo", "agent::claude", "hub::bozza", "ext::e"}
+    r = client.patch(f"/api/notes/{nid}", json={"tags": ["solo", "agent::claude", "ext::e"]})
+    assert r.status_code == 200 and set(r.json()["tags"]) == {"solo", "agent::claude", "ext::e"}
 
 
 def test_admin_token_can_do_everything(client, ids):
@@ -176,7 +173,6 @@ def session_client(seeded):
 def test_session_can_do_everything_and_creates_plain_notes(session_client):
     c = session_client
     out = post_batch(c, [basic("sessione")])
-    assert out["draft"] is False
     nid = out["results"][0]["note_id"]
     assert not any(t.startswith("agent::") for t in get_note(c, nid)["tags"])
     token = c.post("/api/tokens", json={"name": "claude"})
@@ -200,7 +196,7 @@ def test_session_writes_are_csrf_protected(session_client):
 def test_without_credentials_everything_is_401(client):
     for method, path in [
         ("POST", "/api/hub/notes/batch"),
-        ("GET", "/api/hub/summary"),
+        ("GET", "/api/hub/operations"),
         ("GET", "/api/tokens"),
         ("DELETE", "/api/notes/1"),
         ("GET", "/api/cards/1/preview"),

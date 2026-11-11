@@ -105,23 +105,27 @@ def test_routes_request_a_sync_after_a_real_write(client, make_token):
     real = client.app.state.sync
     client.app.state.sync = fake
     try:
-        headers, _ = make_token("claude", review=True)
+        headers, _ = make_token("claude")
         nid = post_batch(client, [basic("a")], headers=headers)["results"][0]["note_id"]
         assert fake.requests == 1
         # dry run, errori, letture e richieste vietate non scrivono: niente sync
         post_batch(client, [basic("b")], headers=headers, dry_run=True)
         post_batch(client, [basic("c", deck="Boh")], headers=headers)
-        client.get("/api/hub/drafts", headers=headers)
-        assert client.post("/api/hub/drafts/approve", json={"note_ids": [nid]}, headers=headers).status_code == 403
+        client.get("/api/hub/operations", headers=headers)
+        assert client.post("/api/hub/operations/nonesiste/undo", headers=headers).status_code == 404
+        assert client.delete(f"/api/notes/{nid}", headers=headers).status_code == 403
         assert fake.requests == 1
 
-        assert client.patch(f"/api/notes/{nid}", json={"fields": {"Back": "x"}}, headers=headers).status_code == 200
+        r = client.patch(f"/api/notes/{nid}", json={"fields": {"Back": "x"}}, headers=headers)
+        assert r.status_code == 200
         assert fake.requests == 2
+        # annullare davvero scrive, quindi anche lì parte la sync; un secondo undo (409) no
+        op = r.json()["operation_id"]
+        assert client.post(f"/api/hub/operations/{op}/undo", headers=headers).status_code == 200
+        assert fake.requests == 3
+        assert client.post(f"/api/hub/operations/{op}/undo", headers=headers).status_code == 409
+        assert fake.requests == 3
         # le scritture hub dalla sessione/amministratore contano
-        assert client.post("/api/hub/drafts/approve", json={"note_ids": [nid]}).json() == {
-            "approved": 1,
-            "skipped_ids": [],
-        }
         assert client.post("/api/hub/decks", json={"name": "Nuovo"}).status_code == 200
         client.post("/api/hub/decks", json={"name": "Nuovo"})  # esisteva già
         assert fake.requests == 4

@@ -58,8 +58,8 @@ def make_token(client):
     """Crea un token per gli agenti (con l'accesso amministratore del client) e restituisce
     gli header da passare alle richieste e la risposta di creazione."""
 
-    def make(name="claude", scope="write", review=False):
-        r = client.post("/api/tokens", json={"name": name, "scope": scope, "review": review})
+    def make(name="claude", scope="write"):
+        r = client.post("/api/tokens", json={"name": name, "scope": scope})
         assert r.status_code == 201, r.text
         body = r.json()
         return {"Authorization": f"Bearer {body['token']}"}, body

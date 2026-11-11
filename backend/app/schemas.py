@@ -150,6 +150,9 @@ class NoteOut(BaseModel):
     fields: dict[str, str]
     tags: list[str]
     card_ids: list[int]
+    # solo nella risposta di `PATCH /notes/{id}` (e di `update_note` via MCP) quando la modifica ha
+    # cambiato davvero qualcosa: l'id dell'operazione nel diario, da dare a `undo`. Altrove è null.
+    operation_id: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -305,7 +308,7 @@ class AuthLogout(BaseModel):
     logout_url: str | None = None
 
 
-# ---- hub: creazione da agenti, bozze, libreria, token (docs/PIANO-HUB.md) --------
+# ---- hub: creazione da agenti, libreria, diario e annullamento, token (docs/PIANO-HUB.md) --------
 #
 # Contratto condiviso tra REST (app/routers/hub.py), server MCP (app/mcp_server.py) e PWA.
 # Se cambi qualcosa qui, aggiorna apps/web/src/api/types.ts.
@@ -331,9 +334,6 @@ class HubBatchIn(BaseModel):
     dry_run: bool = False
     # crea i mazzi che non esistono (altrimenti la nota è un errore)
     create_missing_decks: bool = False
-    # True = bozza (carte sospese, tag `hub::bozza`). None = il default del token
-    # (la sessione della PWA: False). Un token con `review=True` non può forzare False.
-    draft: bool | None = None
 
 
 class HubNoteResult(BaseModel):
@@ -348,13 +348,15 @@ class HubNoteResult(BaseModel):
 
 class HubBatchOut(BaseModel):
     dry_run: bool
-    draft: bool
     created: int
     updated: int
     unchanged: int
     duplicates: int
     errors: int
     results: list[HubNoteResult]
+    # l'operazione nel diario (`GET /hub/operations`), da dare a `undo`; null se non è stato
+    # scritto niente (dry_run, tutto unchanged/duplicate/error)
+    operation_id: str | None = None
 
 
 class HubDeckIn(BaseModel):
@@ -367,53 +369,49 @@ class HubDeckOut(BaseModel):
     name: str
     # False se esisteva già (la rotta è idempotente)
     created: bool
+    # se il mazzo è stato creato: l'operazione nel diario, da dare a `undo`
+    operation_id: str | None = None
 
 
-class HubSummary(BaseModel):
-    # note in bozza da approvare (per il badge della PWA)
-    drafts: int
+OperationKind = Literal["add_notes", "update_note", "create_deck"]
 
 
-class DraftNote(BaseModel):
-    id: int
-    notetype_id: int
-    notetype_name: str
-    fields: dict[str, str]
-    tags: list[str]
-    deck_name: str | None
-    card_ids: list[int]
-    # nome dell'agente dal tag `agent::<nome>`, se c'è
-    agent: str | None
-    # secondi epoch (dall'id della nota)
-    created: int
-    # ultima modifica, secondi epoch: la PWA la rimanda in `expected_mod` per approvare/scartare
-    # esattamente ciò che l'utente ha visto
-    modified: int = 0
+class OperationOut(BaseModel):
+    """Una voce del diario delle operazioni degli agenti (`app/journal.py`)."""
+
+    id: str
+    # secondi epoch
+    created_at: int
+    # slug del token che l'ha fatta ("claude"), oppure "sessione" / "admin"
+    agent: str
+    kind: OperationKind
+    summary: str
+    # note create o aggiornate dall'operazione
+    note_count: int
+    # applied: niente annullato; partial: annullata in parte (si può ritentare); undone: tutta
+    status: Literal["applied", "partial", "undone"]
+    undone_at: int | None = None
 
 
-class DraftList(BaseModel):
-    total: int
-    notes: list[DraftNote]
+class OperationList(BaseModel):
+    # dalla più recente
+    operations: list[OperationOut]
 
 
-class NoteIdsIn(BaseModel):
-    note_ids: list[int] = Field(min_length=1, max_length=500)
-    # id nota → `modified` visto dall'utente. Se la nota è cambiata nel frattempo (per
-    # esempio un agente ha aggiornato la bozza) viene saltata e finisce in `skipped_ids`.
-    expected_mod: dict[int, int] | None = None
+class UndoSkip(BaseModel):
+    # null per un elemento che non è una nota (un mazzo)
+    note_id: int | None = None
+    reason: str
 
 
-class DraftApproveOut(BaseModel):
-    # note passate da bozza a normali (carte riattivate, tag `hub::bozza` tolto)
-    approved: int
-    # note non toccate perché modificate dopo che l'utente le ha viste (o non più bozze)
-    skipped_ids: list[int] = []
-
-
-class DraftDiscardOut(BaseModel):
-    # note cancellate: solo quelle che erano davvero bozze, mai altre
-    discarded: int
-    skipped_ids: list[int] = []
+class UndoOut(BaseModel):
+    operation_id: str
+    status: Literal["undone", "partial"]
+    # note riportate a come erano prima
+    restored: int
+    # note create e cancellate, più i mazzi eliminati
+    deleted: int
+    skipped: list[UndoSkip] = []
 
 
 class NoteMoveIn(BaseModel):
@@ -431,7 +429,7 @@ class NoteTagsOut(BaseModel):
 
 
 class CardPreview(BaseModel):
-    """Una carta mostrata fuori dallo studio (libreria, bozze): come StudyCard, senza
+    """Una carta mostrata fuori dallo studio (libreria): come StudyCard, senza
     pulsanti e senza coda, quindi vale anche per le carte sospese."""
 
     card_id: int
@@ -452,20 +450,16 @@ class TokenIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     # read: solo letture; write: legge e crea/modifica note (mai cancella, mai sync completa)
     scope: Literal["read", "write"] = "write"
-    # le note create da questo token arrivano come bozze
-    review: bool = True
 
 
 class TokenUpdate(BaseModel):
     scope: Literal["read", "write"] | None = None
-    review: bool | None = None
 
 
 class TokenOut(BaseModel):
     id: str
     name: str
     scope: Literal["read", "write"]
-    review: bool
     # secondi epoch
     created_at: int
     last_used_at: int | None = None

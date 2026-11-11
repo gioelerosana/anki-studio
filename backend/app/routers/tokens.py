@@ -18,7 +18,6 @@ def _out(t: StoredToken) -> TokenOut:
         id=t.id,
         name=t.name,
         scope=t.scope,
-        review=t.review,
         created_at=t.created_at,
         last_used_at=t.last_used_at,
     )
@@ -33,7 +32,7 @@ def list_tokens(store: TokenStore = Depends(get_store)):
 def create_token(body: TokenIn, store: TokenStore = Depends(get_store)):
     """Il token in chiaro è nella risposta e solo qui: sul server resta l'hash."""
     try:
-        token, plain = store.create(body.name, body.scope, body.review)
+        token, plain = store.create(body.name, body.scope)
     except TokenNameTaken as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     except TokenError as e:
@@ -43,7 +42,7 @@ def create_token(body: TokenIn, store: TokenStore = Depends(get_store)):
 
 @router.patch("/{token_id}", response_model=TokenOut)
 def update_token(token_id: str, body: TokenUpdate, store: TokenStore = Depends(get_store)):
-    token = store.update(token_id, scope=body.scope, review=body.review)
+    token = store.update(token_id, scope=body.scope)
     if token is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token non trovato")
     return _out(token)

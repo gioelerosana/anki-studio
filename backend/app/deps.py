@@ -1,6 +1,7 @@
 from fastapi import Request
 
 from .collection import CollectionManager
+from .journal import Journal
 from .security import Identity
 from .sync import SyncService
 
@@ -11,6 +12,10 @@ def get_manager(request: Request) -> CollectionManager:
 
 def get_sync(request: Request) -> SyncService:
     return request.app.state.sync
+
+
+def get_journal(request: Request) -> Journal:
+    return request.app.state.journal
 
 
 def get_identity(request: Request) -> Identity:

@@ -1,26 +1,24 @@
-"""Hub delle flashcard: creazione da agenti, mazzi, bozze, anteprime (docs/PIANO-HUB.md).
+"""Hub delle flashcard: creazione da agenti, mazzi, diario con annullamento, anteprime
+(docs/PIANO-HUB.md).
 
-Le rotte sono sottili: la logica sta in `app/hub.py` (la riusa anche il server MCP).
-Chi può chiamarle lo decide `require_auth` (matrice dei permessi in `app/security.py`),
-non queste funzioni: qui si legge solo l'identità per la provenienza e il flag `review`.
+Le rotte sono sottili: la logica sta in `app/hub.py` e `app/journal.py` (le riusa anche il server
+MCP). Chi può chiamarle lo decide `require_auth` (matrice dei permessi in `app/security.py`),
+non queste funzioni: qui si legge solo l'identità per la provenienza e per il diario.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .. import hub
+from .. import hub, journal
 from ..collection import CollectionManager
-from ..deps import get_identity, get_manager, get_sync
+from ..deps import get_identity, get_journal, get_manager, get_sync
 from ..schemas import (
     CardPreview,
-    DraftApproveOut,
-    DraftDiscardOut,
-    DraftList,
     HubBatchIn,
     HubBatchOut,
     HubDeckIn,
     HubDeckOut,
-    HubSummary,
-    NoteIdsIn,
+    OperationList,
+    UndoOut,
 )
 from ..security import Identity
 from ..sync import SyncService
@@ -44,15 +42,15 @@ def create_notes_batch(
     identity: Identity = Depends(get_identity),
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
+    ops: journal.Journal = Depends(get_journal),
 ):
-    """Fino a 100 note, ognuna col suo esito. `dry_run` non scrive niente. Una batch è
-    una sola operazione annullabile. Le note di un token portano `agent::<nome>`; con
-    `review` (token) o `draft` sono bozze: carte sospese e tag `hub::bozza`. Con `review` anche
-    una nota già approvata, se la modifichi rimandando lo stesso `external_id`, torna bozza.
+    """Fino a 100 note, ognuna col suo esito. `dry_run` non scrive niente. Le note entrano subito,
+    normali e attive; quelle di un token portano `agent::<nome>`. Se la batch scrive qualcosa
+    finisce nel diario come una sola operazione: `operation_id` per annullarla (`/hub/operations`).
     Tetti: 200 KB per campo e 2 MB per batch (422)."""
     with manager.use() as col:
         try:
-            out = hub.create_batch(col, body, agent=identity.agent, review=identity.review)
+            out = hub.create_batch(col, body, agent=identity.agent, journal=ops, actor=identity.actor)
         except hub.HubError as e:  # batch troppo grande: 422 prima di scrivere
             raise hub_http_error(e)
     if not out.dry_run and (out.created or out.updated):
@@ -63,13 +61,15 @@ def create_notes_batch(
 @router.post("/hub/decks", response_model=HubDeckOut)
 def create_deck(
     body: HubDeckIn,
+    identity: Identity = Depends(get_identity),
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
+    ops: journal.Journal = Depends(get_journal),
 ):
     """Idempotente: se il mazzo esiste lo restituisce con `created: false`."""
     with manager.use() as col:
         try:
-            out = hub.create_deck(col, body.name)
+            out = hub.create_deck(col, body.name, journal=ops, actor=identity.actor)
         except hub.HubError as e:
             raise hub_http_error(e)
     if out.created:
@@ -77,55 +77,51 @@ def create_deck(
     return out
 
 
-@router.get("/hub/summary", response_model=HubSummary)
-def summary(manager: CollectionManager = Depends(get_manager)):
-    with manager.use() as col:
-        return hub.summary(col)
+def _own(identity: Identity) -> str | None:
+    """Chi ha uno scope (token, OAuth) vede e annulla solo le operazioni del proprio agente."""
+    return identity.agent if identity.scoped else None
 
 
-@router.get("/hub/drafts", response_model=DraftList)
-def list_drafts(
-    limit: int = Query(50, ge=1, le=_MAX_LIMIT, description=f"Al massimo {_MAX_LIMIT}"),
-    offset: int = Query(0, ge=0),
-    manager: CollectionManager = Depends(get_manager),
+@router.get("/hub/operations", response_model=OperationList)
+def list_operations(
+    limit: int = Query(50, ge=1, le=_MAX_LIMIT, description=f"Da 1 a {_MAX_LIMIT}"),
+    identity: Identity = Depends(get_identity),
+    ops: journal.Journal = Depends(get_journal),
 ):
-    with manager.use() as col:
-        return hub.list_drafts(col, limit, offset)
+    """Il diario delle operazioni degli agenti, dalla più recente: le ultime 200 e al massimo 30
+    giorni. Sessione e `ANKI_API_TOKEN` le vedono tutte; un token vede solo le proprie. Non
+    tocca la collezione."""
+    return OperationList(operations=ops.list(agent=_own(identity), limit=limit))
 
 
-@router.post("/hub/drafts/approve", response_model=DraftApproveOut)
-def approve_drafts(
-    body: NoteIdsIn,
-    manager: CollectionManager = Depends(get_manager),
-    sync: SyncService = Depends(get_sync),
-):
-    """Le carte tornano attive e il tag `hub::bozza` sparisce. Gli id che non sono (più) bozze, o
-    che sono cambiati dopo `expected_mod`, non si toccano e tornano in `skipped_ids`."""
-    with manager.use() as col:
-        out = hub.approve_drafts(col, body.note_ids, body.expected_mod)
-    if out.approved:
-        sync.request_soon()
-    return out
-
-
-@router.post("/hub/drafts/discard", response_model=DraftDiscardOut)
-def discard_drafts(
-    body: NoteIdsIn,
+@router.post("/hub/operations/{operation_id}/undo", response_model=UndoOut)
+def undo_operation(
+    operation_id: str,
+    identity: Identity = Depends(get_identity),
     manager: CollectionManager = Depends(get_manager),
     sync: SyncService = Depends(get_sync),
+    ops: journal.Journal = Depends(get_journal),
 ):
-    """Cancella le note scelte, ma solo bozze vere (carte tutte sospese e mai ripassate): le altre
-    restano dove sono e tornano in `skipped_ids`, come quelle cambiate dopo `expected_mod`."""
+    """Annulla un'operazione: cancella le note create (se nessuno le ha toccate o studiate), riporta
+    com'erano le note aggiornate (se nessuno le ha modificate dopo) ed elimina i mazzi creati (se
+    vuoti). Ciò che non si può annullare si salta e torna in `skipped` con il motivo; l'operazione
+    resta `partial` e si può ritentare. Non annulla media né sync. 404 se l'id non esiste (o è
+    di un altro agente), 409 se è già annullata, 403 a un token `read`."""
     with manager.use() as col:
-        out = hub.discard_drafts(col, body.note_ids, body.expected_mod)
-    if out.discarded:
+        try:
+            out = ops.undo(col, operation_id, agent=_own(identity))
+        except journal.OperationNotFound as e:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+        except journal.AlreadyUndone as e:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    if out.restored or out.deleted:
         sync.request_soon()
     return out
 
 
 @router.get("/cards/{card_id}/preview", response_model=CardPreview)
 def card_preview(card_id: int, manager: CollectionManager = Depends(get_manager)):
-    """Come una carta di studio, ma senza coda: vale anche per le carte sospese (bozze)."""
+    """Come una carta di studio, ma senza coda: vale anche per le carte sospese."""
     with manager.use() as col:
         try:
             return hub.card_preview(col, card_id)

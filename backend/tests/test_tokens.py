@@ -18,10 +18,10 @@ from .conftest import TOKEN
 
 def test_create_shows_plain_token_once_and_stores_only_the_hash(client, seeded, make_token):
     settings, _ = seeded
-    headers, created = make_token("Hermes Agent", scope="write", review=True)
+    headers, created = make_token("Hermes Agent", scope="write")
     plain = created["token"]
     assert plain.startswith("ask_") and len(plain) >= 40
-    assert created["name"] == "Hermes Agent" and created["scope"] == "write" and created["review"]
+    assert created["name"] == "Hermes Agent" and created["scope"] == "write" and "review" not in created
     assert created["last_used_at"] is None and created["created_at"] > 0
 
     path = settings.anki_data_dir / "tokens.json"
@@ -46,7 +46,7 @@ def test_plain_token_never_in_logs(client, make_token, caplog):
     headers, created = make_token("claude")
     plain = created["token"]
     client.get("/api/decks", headers=headers)
-    client.post("/api/hub/drafts/approve", json={"note_ids": [1]}, headers=headers)  # 403, logga
+    client.delete("/api/notes/1", headers=headers)  # 403, logga
     client.get("/api/decks", headers={"Authorization": "Bearer ask_sbagliato"})
     assert plain not in caplog.text
     # e il filtro dei log lo oscura comunque, se finisse in un messaggio o in un traceback
@@ -92,15 +92,16 @@ def test_last_used_at_is_persisted_sparingly(client, seeded, make_token):
     assert path.stat().st_mtime_ns == mtime  # niente riscritture a ogni richiesta
 
 
-def test_update_scope_and_review(client, make_token):
-    headers, created = make_token("claude", scope="write", review=True)
+def test_update_scope(client, make_token):
+    headers, created = make_token("claude", scope="write")
+    # un client vecchio può ancora mandare `review`: si ignora
     r = client.patch(f"/api/tokens/{created['id']}", json={"scope": "read", "review": False})
-    assert r.status_code == 200 and r.json()["scope"] == "read" and r.json()["review"] is False
+    assert r.status_code == 200 and r.json()["scope"] == "read" and "review" not in r.json()
     # il nuovo scope vale subito
     assert client.post(
         "/api/hub/decks", json={"name": "X"}, headers=headers
     ).status_code == 403
-    assert client.patch("/api/tokens/nope", json={"review": True}).status_code == 404
+    assert client.patch("/api/tokens/nope", json={"scope": "read"}).status_code == 404
 
 
 def test_names_are_unique_by_slug(client, make_token):
@@ -161,7 +162,7 @@ def test_tokens_file_with_the_wrong_shape_is_set_aside_too(seeded, content):
     settings, _ = seeded
     path = settings.anki_data_dir / "tokens.json"
     path.write_text(content)
-    TokenStore(path).create("claude", "write", True)
+    TokenStore(path).create("claude", "write")
     assert [p.read_text() for p in settings.anki_data_dir.glob("tokens.json.bak-*")] == [content]
 
 
@@ -169,7 +170,7 @@ def test_unknown_fields_in_tokens_file_do_not_wipe_the_tokens(tmp_path):
     """Un file scritto da una versione più nuova (un campo in più) e poi un downgrade: i token
     restano validi."""
     path = tmp_path / "tokens.json"
-    token, plain = TokenStore(path).create("claude", "write", True)
+    token, plain = TokenStore(path).create("claude", "write")
     raw = json.loads(path.read_text())
     raw["tokens"][0]["expires_at"] = 123
     raw["futuro"] = True
@@ -178,6 +179,21 @@ def test_unknown_fields_in_tokens_file_do_not_wipe_the_tokens(tmp_path):
     assert [t.id for t in store.all()] == [token.id]
     assert store.verify(plain) is not None
     assert not list(tmp_path.glob("tokens.json.bak-*"))
+
+
+def test_a_legacy_tokens_file_with_review_still_loads(tmp_path):
+    """Le bozze sono state eliminate: un `tokens.json` con il vecchio campo `review` si legge
+    lo stesso (il campo si ignora) e alla prima scrittura non c'è più."""
+    path = tmp_path / "tokens.json"
+    token, plain = TokenStore(path).create("claude", "write")
+    raw = json.loads(path.read_text())
+    raw["tokens"][0]["review"] = True
+    path.write_text(json.dumps(raw))
+    store = TokenStore(path)
+    assert store.verify(plain) is not None
+    assert not list(tmp_path.glob("tokens.json.bak-*"))
+    store.create("altro", "read")
+    assert all("review" not in t for t in json.loads(path.read_text())["tokens"])
 
 
 def test_a_missing_tokens_file_is_not_an_error(tmp_path):
@@ -200,7 +216,7 @@ def test_unmovable_unreadable_file_is_never_overwritten(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "replace", refuse_to_move_it)
     store = TokenStore(path)
     with pytest.raises(OSError):
-        store.create("claude", "write", True)
+        store.create("claude", "write")
     assert path.read_text() == "{non json"
 
 
@@ -277,7 +293,7 @@ def test_a_token_that_never_existed_counts_even_if_it_looks_like_a_revoked_one(o
 def test_revoked_hashes_survive_a_restart_and_never_hold_the_plain_token(seeded):
     settings, _ = seeded
     store = TokenStore(settings.anki_data_dir / "tokens.json")
-    token, plain = store.create("claude", "write", False)
+    token, plain = store.create("claude", "write")
     store.revoke(token.id)
     again = TokenStore(settings.anki_data_dir / "tokens.json")
     assert again.is_revoked(plain) and not again.is_revoked("ask_altro")

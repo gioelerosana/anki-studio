@@ -1,4 +1,4 @@
-"""Server MCP su /mcp: strumenti, permessi (gli stessi della REST), bozze, errori chiari,
+"""Server MCP su /mcp: strumenti, permessi (gli stessi della REST), diario e annullamento, errori chiari,
 sync dopo la scrittura e client dell'SDK su un uvicorn vero (entrambe le versioni del protocollo)."""
 
 import asyncio
@@ -31,8 +31,10 @@ EXPECTED_TOOLS = {
     "sync_now",
     "sync_status",
     "add_media",
+    "list_operations",
+    "undo_operation",
 }
-READ_ONLY = {"list_decks", "list_notetypes", "search_notes", "get_note", "sync_status"}
+READ_ONLY = {"list_decks", "list_notetypes", "search_notes", "get_note", "sync_status", "list_operations"}
 PNG_B64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
 
 ACCEPT = "application/json, text/event-stream"
@@ -89,10 +91,10 @@ def mcp_client(seeded):
 def tokens(mcp_client):
     """Crea token per gli agenti con l'accesso amministratore."""
 
-    def make(name="claude", scope="write", review=False) -> str:
+    def make(name="claude", scope="write") -> str:
         r = mcp_client.post(
             "/api/tokens",
-            json={"name": name, "scope": scope, "review": review},
+            json={"name": name, "scope": scope},
             headers={"Authorization": f"Bearer {TOKEN}"},
         )
         assert r.status_code == 201, r.text
@@ -117,32 +119,44 @@ def test_initialize_and_tools_list(mcp_client):
     assert r.status_code == 200
     info = msg["result"]["serverInfo"]
     assert info["name"] == "Anki Studio"
-    # le istruzioni avvertono dei dati non fidati e dicono che le bozze si approvano nella app
-    assert "non fidato" in msg["result"]["instructions"] and "BOZZE" in msg["result"]["instructions"]
+    # le istruzioni avvertono dei dati non fidati, dicono che le note entrano subito (niente bozze)
+    # e come si rimedia a un errore
+    instructions = msg["result"]["instructions"]
+    assert "non fidato" in instructions and "SUBITO" in instructions
+    assert "list_operations" in instructions and "undo_operation" in instructions
+    assert "BOZZE" not in instructions and "bozze" not in instructions.replace("nessuna bozza", "")
 
     r, msg = rpc(mcp_client, "tools/list")
     tools = {t["name"]: t for t in msg["result"]["tools"]}
-    # niente strumenti per cancellare, approvare, sync completa o tipi di nota
+    # niente strumenti per cancellare note, sync completa o tipi di nota
     assert set(tools) == EXPECTED_TOOLS
     for name, tool in tools.items():
         assert tool["title"] and tool["description"], name
         ann = tool["annotations"]
         assert ann["title"] == tool["title"]
         assert ann["readOnlyHint"] is (name in READ_ONLY), name
-        # nessuno strumento cancella: l'unico distruttivo (sovrascrive campi) è update_note
+        # distruttivi: update_note (sovrascrive campi) e undo_operation (annulla ciò che l'agente ha fatto)
         if name in READ_ONLY:
             assert ann.get("destructiveHint") in (None, False)
         else:
-            assert ann["destructiveHint"] is (name == "update_note"), name
+            assert ann["destructiveHint"] is (name in ("update_note", "undo_operation")), name
     assert tools["sync_now"]["annotations"]["openWorldHint"] is True
     assert tools["add_notes"]["annotations"]["idempotentHint"] is True
     # le descrizioni sono in italiano e i tool che leggono dalla collezione avvertono
     for name in ("search_notes", "get_note"):
         assert "non fidato" in tools[name]["description"], name
-    assert "dry_run" in tools["add_notes"]["description"] and "BOZZE" in tools["add_notes"]["description"]
+    add = tools["add_notes"]["description"]
+    assert "dry_run" in add and "operation_id" in add and "undo_operation" in add and "bozz" in add
+    assert "BOZZE" not in add
+    for name in ("update_note", "create_deck"):
+        assert "operation_id" in tools[name]["description"], name
+    undo = tools["undo_operation"]["description"]
+    assert "SALTA" in undo and "media" in undo and "sync" in undo and "partial" in undo
+    assert "list_operations" in tools["list_operations"]["description"] or "undo_operation" in tools["list_operations"]["description"]
     schema = tools["add_notes"]["inputSchema"]
     assert schema["properties"]["notes"]["maxItems"] == 100 and schema["required"] == ["notes"]
-    assert set(schema["properties"]) == {"notes", "dry_run", "create_missing_decks", "draft"}
+    assert set(schema["properties"]) == {"notes", "dry_run", "create_missing_decks"}
+    assert tools["undo_operation"]["inputSchema"]["required"] == ["operation_id"]
     assert tools["add_media"]["inputSchema"]["required"] == ["filename", "data_base64"]
 
 
@@ -164,7 +178,7 @@ def test_read_tools(mcp_client):
     assert found["total"] == 1 and found["notes"][0]["deck_name"] == "Spagnolo::Verbi"
 
     note = call(mcp_client, "get_note", {"note_id": found["notes"][0]["id"]})["structuredContent"]
-    assert note["notetype_name"] == "Basic" and note["draft"] is False
+    assert note["notetype_name"] == "Basic" and "draft" not in note
     assert note["fields"]["Back"].startswith("essere") and note["deck_name"] == "Spagnolo::Verbi"
 
     status = call(mcp_client, "sync_status")["structuredContent"]
@@ -187,44 +201,30 @@ def test_read_tool_errors_are_clear(mcp_client):
 
 
 def test_add_notes_dry_run_then_real(mcp_client, tokens):
-    token = tokens("claude", review=True)
+    token = tokens("claude")
     args = {"notes": [note_args("hablar", "parlare", external_id="v-hablar")], "dry_run": True}
     dry = call(mcp_client, "add_notes", args, token=token)["structuredContent"]
-    assert dry["dry_run"] is True and dry["created"] == 1 and dry["draft"] is True
-    assert mcp_client.get("/api/hub/summary").json() == {"drafts": 0}
+    assert dry["dry_run"] is True and dry["created"] == 1 and dry["operation_id"] is None
+    assert mcp_client.get("/api/search/notes?q=hablar").json()["total"] == 0
 
     args["dry_run"] = False
     out = call(mcp_client, "add_notes", args, token=token)["structuredContent"]
     assert out["created"] == 1 and out["results"][0]["status"] == "created"
     nid = out["results"][0]["note_id"]
     note = call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]
-    # provenienza e bozza, come dalla REST
-    assert {"agent::claude", "ext::v-hablar", "hub::bozza"} <= set(note["tags"])
-    assert note["draft"] is True
-    assert mcp_client.get("/api/hub/summary").json() == {"drafts": 1}
-    # rimandare lo stesso external_id non duplica
-    again = call(mcp_client, "add_notes", args, token=token)["structuredContent"]
-    assert again["unchanged"] == 1 and again["created"] == 0
-
-
-def test_review_cannot_be_bypassed(mcp_client, tokens):
-    review = tokens("revisionato", review=True)
-    free = tokens("libero", review=False)
-    out = call(mcp_client, "add_notes", {"notes": [note_args("uno")], "draft": False}, token=review)
-    assert out["structuredContent"]["draft"] is True
-    nid = out["structuredContent"]["results"][0]["note_id"]
+    # provenienza, come dalla REST; la nota è normale e le carte sono attive
+    assert set(note["tags"]) == {"agent::claude", "ext::v-hablar"}
     with mcp_client.app.state.manager.use() as col:
-        assert all(col.get_card(c).queue == -1 for c in col.get_note(nid).card_ids())
-    # senza review (e senza `draft`) le note sono normali; con `draft: true` sono bozze
-    plain = call(mcp_client, "add_notes", {"notes": [note_args("due")]}, token=free)["structuredContent"]
-    assert plain["draft"] is False
-    drafted = call(mcp_client, "add_notes", {"notes": [note_args("tre")], "draft": True}, token=free)
-    assert drafted["structuredContent"]["draft"] is True
+        assert all(col.get_card(c).queue == 0 for c in col.get_note(nid).card_ids())
+    assert out["operation_id"]
+    # rimandare lo stesso external_id non duplica, e non registra niente
+    again = call(mcp_client, "add_notes", args, token=token)["structuredContent"]
+    assert again["unchanged"] == 1 and again["created"] == 0 and again["operation_id"] is None
 
 
 def test_reserved_tags_are_ignored(mcp_client, tokens):
     token = tokens("claude")
-    n = note_args("tag", tags=["utile", "agent::altro", "hub::bozza", "ext::x"])
+    n = note_args("tag", tags=["utile", "agent::altro", "ext::x"])
     out = call(mcp_client, "add_notes", {"notes": [n]}, token=token)["structuredContent"]
     tags = call(mcp_client, "get_note", {"note_id": out["results"][0]["note_id"]}, token=token)["structuredContent"]["tags"]
     assert set(tags) == {"utile", "agent::claude"}
@@ -281,15 +281,8 @@ def test_update_note_only_on_own_notes(mcp_client, tokens):
     unknown_field = call(mcp_client, "update_note", {"note_id": mine_id, "fields": {"Nope": "x"}}, token=mine)
     assert unknown_field["isError"] and "Campi inesistenti" in text_of(unknown_field)
     # i tag riservati restano com'erano
-    tags = call(mcp_client, "update_note", {"note_id": mine_id, "tags": ["x", "agent::altro", "hub::bozza"]}, token=mine)
+    tags = call(mcp_client, "update_note", {"note_id": mine_id, "tags": ["x", "agent::altro", "ext::y"]}, token=mine)
     assert set(tags["structuredContent"]["tags"]) == {"x", "agent::mio"}
-
-
-def test_update_note_keeps_draft_state(mcp_client, tokens):
-    token = tokens("claude", review=True)
-    nid = call(mcp_client, "add_notes", {"notes": [note_args("b")]}, token=token)["structuredContent"]["results"][0]["note_id"]
-    out = call(mcp_client, "update_note", {"note_id": nid, "tags": []}, token=token)
-    assert "hub::bozza" in out["structuredContent"]["tags"]
 
 
 def test_admin_can_update_any_note(mcp_client):
@@ -325,24 +318,6 @@ def list_tools(client):
     return msg["result"]["tools"]
 
 
-def test_review_token_redrafts_an_approved_note_through_mcp(mcp_client, tokens):
-    token = tokens("claude", review=True)
-    out = call(mcp_client, "add_notes", {"notes": [note_args("r", "uno", external_id="r1")]}, token=token)
-    nid = out["structuredContent"]["results"][0]["note_id"]
-    mcp_client.post("/api/hub/drafts/approve", json={"note_ids": [nid]})
-    assert not call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]["draft"]
-
-    # add_notes con lo stesso external_id e un contenuto diverso
-    call(mcp_client, "add_notes", {"notes": [note_args("r", "due", external_id="r1")]}, token=token)
-    assert call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]["draft"]
-
-    # update_note su una nota approvata di nuovo
-    mcp_client.post("/api/hub/drafts/approve", json={"note_ids": [nid]})
-    call(mcp_client, "update_note", {"note_id": nid, "fields": {"Back": "tre"}}, token=token)
-    got = call(mcp_client, "get_note", {"note_id": nid}, token=token)["structuredContent"]
-    assert got["draft"] and got["fields"]["Back"] == "tre"
-
-
 def test_external_id_pattern_and_size_limits_over_mcp(mcp_client, tokens):
     token = tokens("claude")
     for bad in ("con spazio", "a*b", "x" * 201):
@@ -363,13 +338,13 @@ def test_read_scope_can_only_read(mcp_client, tokens):
     token = tokens("lettore", scope="read")
     for name in READ_ONLY - {"get_note"}:
         assert not call(mcp_client, name, {"query": "ser"} if name == "search_notes" else {}, token=token)["isError"], name
-    before = mcp_client.get("/api/hub/summary").json()
     writes = {
         "add_notes": {"notes": [note_args("zz")]},
         "update_note": {"note_id": 1, "fields": {"Back": "x"}},
         "create_deck": {"name": "Vietato"},
         "sync_now": {},
         "add_media": {"filename": "a.png", "data_base64": PNG_B64},
+        "undo_operation": {"operation_id": "abc"},
     }
     for name, args in writes.items():
         r = call(mcp_client, name, args, token=token)
@@ -378,7 +353,7 @@ def test_read_scope_can_only_read(mcp_client, tokens):
     assert mcp_client.get("/api/search/notes?q=zz").json()["total"] == 0
     assert call(mcp_client, "list_decks", token=token)["structuredContent"]["result"]
     assert all(d["full_name"] != "Vietato" for d in call(mcp_client, "list_decks")["structuredContent"]["result"])
-    assert mcp_client.get("/api/hub/summary").json() == before
+    assert call(mcp_client, "list_operations", token=token)["structuredContent"]["operations"] == []
 
 
 def test_in_process_client_without_identity_is_denied(mcp_client):

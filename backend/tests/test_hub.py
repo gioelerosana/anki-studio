@@ -1,4 +1,4 @@
-"""Hub delle flashcard: batch, idempotenza, bozze, anteprima, spostamenti e tag in blocco."""
+"""Hub delle flashcard: batch, idempotenza, anteprima, spostamenti e tag in blocco."""
 
 import pytest
 
@@ -23,12 +23,6 @@ def get_note(client, note_id):
     return r.json()
 
 
-def add_tag_directly(client, note_id, tag):
-    """Come se il tag arrivasse da Anki desktop o da un altro dispositivo (sync)."""
-    with client.app.state.manager.use() as col:
-        col.tags.bulk_add([note_id], tag)
-
-
 def card_queues(client, note_id):
     with client.app.state.manager.use() as col:
         return [col.get_card(c).queue for c in col.get_note(note_id).card_ids()]
@@ -42,15 +36,15 @@ def test_batch_creates_with_deck_by_name_and_id(client):
         client,
         [basic("hablar", "parlare"), basic("comer", deck=client.deck_id)],
     )
-    assert (out["created"], out["errors"], out["draft"], out["dry_run"]) == (2, 0, False, False)
+    assert (out["created"], out["errors"], out["dry_run"]) == (2, 0, False)
     first = out["results"][0]
     assert first["status"] == "created" and first["note_id"] and len(first["card_ids"]) == 1
     note = get_note(client, first["note_id"])
     assert note["fields"] == {"Front": "hablar", "Back": "parlare"}
     assert note_count(client) == 5
-    # una nota normale non finisce tra le bozze e le carte sono attive
+    # le note entrano subito: normali, con le carte attive
     assert card_queues(client, first["note_id"]) == [0]
-    assert client.get("/api/hub/summary").json() == {"drafts": 0}
+    assert "hub::bozza" not in note["tags"]
 
 
 def test_batch_per_note_errors_do_not_stop_the_others(client):
@@ -119,8 +113,8 @@ def test_dry_run_reports_without_writing(client):
         basic("due"),
         basic("rotta", deck="Boh"),
     ]
-    out = post_batch(client, notes, dry_run=True, create_missing_decks=True, draft=True)
-    assert out["dry_run"] is True and out["draft"] is True
+    out = post_batch(client, notes, dry_run=True, create_missing_decks=True)
+    assert out["dry_run"] is True and out["operation_id"] is None
     assert [r["status"] for r in out["results"]] == ["created", "created", "created"]
     assert all(r["note_id"] is None for r in out["results"])
     # nessuna nota, nessun mazzo, nessuna voce di undo
@@ -226,32 +220,28 @@ def test_batch_is_one_undoable_operation(client):
         assert col.note_count() == before
 
 
-@pytest.mark.parametrize("draft", [False, True])
-def test_batch_of_100_notes_is_one_undoable_operation(client, draft):
-    """Anki tiene solo 30 passi di undo: con 100 note (e le carte sospese) la voce unica cadrebbe
-    dalla pila se i passi non venissero fusi man mano."""
+def test_batch_of_100_notes_is_one_undoable_operation(client):
+    """Anki tiene solo 30 passi di undo: con 100 note la voce unica cadrebbe dalla pila se i
+    passi non venissero fusi man mano."""
     before = note_count(client)
-    out = post_batch(client, [basic(f"c{i}") for i in range(100)], draft=draft)
+    out = post_batch(client, [basic(f"c{i}") for i in range(100)])
     assert out["created"] == 100 and note_count(client) == before + 100
     with client.app.state.manager.use() as col:
         assert col.undo_status().undo == "Aggiungi note da agente"
         col.undo()
         assert col.note_count() == before
-    assert client.get("/api/hub/summary").json() == {"drafts": 0}
 
 
 def test_batch_updating_100_notes_is_one_undoable_operation(client, make_token):
-    headers, _ = make_token("claude", review=True)
+    headers, _ = make_token("claude")
     notes = [basic(f"u{i}", "uno", external_id=f"u{i}") for i in range(100)]
-    post_batch(client, notes, headers=headers)
-    ids = [n["id"] for n in client.get("/api/hub/drafts?limit=200").json()["notes"]]
-    client.post("/api/hub/drafts/approve", json={"note_ids": ids})
+    created = post_batch(client, notes, headers=headers)
+    ids = [r["note_id"] for r in created["results"]]
     out = post_batch(client, [basic(f"u{i}", "due", external_id=f"u{i}") for i in range(100)], headers=headers)
     assert out["updated"] == 100
     with client.app.state.manager.use() as col:
         assert col.undo_status().undo == "Aggiungi note da agente"
         col.undo()  # una sola voce: torna tutto com'era prima dell'aggiornamento
-    assert client.get("/api/hub/summary").json() == {"drafts": 0}
     assert get_note(client, ids[0])["fields"]["Back"] == "uno"
 
 
@@ -273,112 +263,45 @@ def test_reserved_tags_from_the_request_are_ignored(client, make_token):
     headers, _ = make_token("claude")
     out = post_batch(
         client,
-        [basic("t", tags=["utile", "hub::bozza", "agent::altro", "ext::furbo", "con spazio"])],
+        [basic("t", tags=["utile", "AGENT::altro", "agent::altro", "ext::furbo", "con spazio"])],
         headers=headers,
-        draft=False,
     )
     tags = set(get_note(client, out["results"][0]["note_id"])["tags"])
     assert tags == {"utile", "con_spazio", "agent::claude"}
 
 
-# ---- bozze ---------------------------------------------------------------------------
-
-
-def test_review_token_always_creates_drafts(client, make_token):
-    headers, _ = make_token("hermes", review=True)
-    # draft=False non vale: un token con review non può aggirare l'approvazione
-    out = post_batch(client, [basic("bozza")], headers=headers, draft=False)
-    assert out["draft"] is True
+def test_hub_prefix_is_no_longer_reserved(client, make_token):
+    """`hub::bozza` non ha più alcun significato speciale: è un tag come un altro."""
+    headers, _ = make_token("claude")
+    out = post_batch(client, [basic("t", tags=["hub::bozza"])], headers=headers)
     nid = out["results"][0]["note_id"]
-    note = get_note(client, nid)
-    assert {"hub::bozza", "agent::hermes"} <= set(note["tags"])
-    assert card_queues(client, nid) == [-1]
-    assert client.get("/api/hub/summary").json() == {"drafts": 1}
-
-
-def test_token_without_review_chooses_and_session_creates_normal_notes(client, make_token):
-    headers, _ = make_token("script", review=False)
-    assert post_batch(client, [basic("a")], headers=headers)["draft"] is False
-    draft = post_batch(client, [basic("b")], headers=headers, draft=True)
-    assert draft["draft"] is True
-    assert card_queues(client, draft["results"][0]["note_id"]) == [-1]
-    assert client.get("/api/hub/summary").json() == {"drafts": 1}
-    # l'amministratore (ANKI_API_TOKEN) crea note normali e senza provenienza
-    admin = post_batch(client, [basic("c")])
-    assert admin["draft"] is False
-    assert not any(t.startswith("agent::") for t in get_note(client, admin["results"][0]["note_id"])["tags"])
-
-
-def test_draft_list_approve_and_discard(client, make_token):
-    headers, _ = make_token("claude", review=True)
-    out = post_batch(client, [basic("uno"), basic("due"), basic("tre")], headers=headers)
-    ids = [r["note_id"] for r in out["results"]]
-
-    listing = client.get("/api/hub/drafts").json()
-    assert listing["total"] == 3
-    note = listing["notes"][0]
-    assert note["agent"] == "claude" and note["deck_name"] == "Spagnolo::Verbi"
-    assert note["notetype_name"] == "Basic" and note["fields"]["Front"] in {"uno", "due", "tre"}
-    assert client.get("/api/hub/drafts?limit=2&offset=2").json()["notes"].__len__() == 1
-
-    # approvare: carte riattivate e tag tolto; un id che non è bozza si ignora
-    normal = client.get("/api/search/notes?q=ser").json()["notes"][0]["id"]
-    r = client.post("/api/hub/drafts/approve", json={"note_ids": [ids[0], normal, 999]})
-    # `normal` e 999 non sono bozze: si saltano, ma lo si dice
-    assert r.json() == {"approved": 1, "skipped_ids": [normal, 999]}
-    approved = get_note(client, ids[0])
-    assert "hub::bozza" not in approved["tags"] and "agent::claude" in approved["tags"]
-    assert card_queues(client, ids[0]) == [0]
-    assert client.get("/api/hub/summary").json() == {"drafts": 2}
-
-    # scartare: solo le bozze. Una nota normale resta, anche se la si chiede
-    r = client.post("/api/hub/drafts/discard", json={"note_ids": [ids[1], ids[0], normal]})
-    assert r.json() == {"discarded": 1, "skipped_ids": [ids[0], normal]}
-    assert client.get(f"/api/notes/{ids[1]}").status_code == 404
-    assert client.get(f"/api/notes/{ids[0]}").status_code == 200
-    assert client.get(f"/api/notes/{normal}").status_code == 200
-    assert client.get("/api/hub/summary").json() == {"drafts": 1}
-
-
-def test_approve_is_one_undo_step(client, make_token):
-    headers, _ = make_token("claude", review=True)
-    out = post_batch(client, [basic("a"), basic("b")], headers=headers)
-    ids = [r["note_id"] for r in out["results"]]
-    client.post("/api/hub/drafts/approve", json={"note_ids": ids})
-    with client.app.state.manager.use() as col:
-        col.undo()
-    assert client.get("/api/hub/summary").json() == {"drafts": 2}
-    assert card_queues(client, ids[0]) == [-1]
-
-
-def test_discard_cannot_remove_a_note_that_only_looks_like_a_draft(client):
-    # `hub::bozza::x` e `hub::bozza-no` non sono bozze
-    for tag in ("hub::bozza::figlio", "hub::bozza-no"):
-        nid = post_batch(client, [basic(tag)])["results"][0]["note_id"]
-        add_tag_directly(client, nid, tag)  # dalla REST i tag `hub::` non si possono mettere
-        out = client.post("/api/hub/drafts/discard", json={"note_ids": [nid]}).json()
-        assert out == {"discarded": 0, "skipped_ids": [nid]}
-        assert client.get(f"/api/notes/{nid}").status_code == 200
+    assert set(get_note(client, nid)["tags"]) == {"hub::bozza", "agent::claude"}
+    assert card_queues(client, nid) == [0]
+    assert client.post("/api/notes/tags", json={"note_ids": [nid], "remove": ["hub::bozza"]}).json() == {"updated": 1}
+    assert set(get_note(client, nid)["tags"]) == {"agent::claude"}
+    # restano riservati la provenienza e l'id dell'invio, e i loro genitori
+    for body in ({"add": ["agent::x"]}, {"add": ["ext::x"]}, {"remove": ["agent"]}, {"remove": ["EXT"]}):
+        assert client.post("/api/notes/tags", json={"note_ids": [nid], **body}).status_code == 422
 
 
 # ---- anteprima -----------------------------------------------------------------------
 
 
-def test_preview_of_a_suspended_card(client, make_token):
-    headers, _ = make_token("claude", review=True)
-    out = post_batch(client, [basic("pregunta <b>x</b>", "risposta")], headers=headers)
+def test_preview_of_a_card_and_of_a_suspended_one(client):
+    out = post_batch(client, [basic("pregunta <b>x</b>", "risposta")])
     cid = out["results"][0]["card_ids"][0]
     r = client.get(f"/api/cards/{cid}/preview")
     assert r.status_code == 200, r.text
     card = r.json()
-    assert card["suspended"] is True and card["flag"] == 0
+    assert card["suspended"] is False and card["flag"] == 0
     assert "pregunta" in card["question_html"] and "risposta" in card["answer_html"]
     assert card["deck_name"] == "Spagnolo::Verbi" and card["deck_id"] == client.deck_id
     assert card["card_class"].startswith("card") and ".card" in card["css"]
     assert "autoplay" not in card
-    # una carta normale non è sospesa
-    normal = client.get("/api/search/notes?q=ser").json()["notes"][0]["card_ids"][0]
-    assert client.get(f"/api/cards/{normal}/preview").json()["suspended"] is False
+    # una carta sospesa si può vedere lo stesso
+    with client.app.state.manager.use() as col:
+        col.sched.suspend_cards([cid])
+    assert client.get(f"/api/cards/{cid}/preview").json()["suspended"] is True
     assert client.get("/api/cards/1/preview").status_code == 404
 
 
@@ -391,7 +314,7 @@ def test_create_deck_is_idempotent(client):
     first = r.json()
     assert first["created"] is True and first["name"] == "Storia::Antica"
     again = client.post("/api/hub/decks", json={"name": "Storia::Antica"}).json()
-    assert again == {**first, "created": False}
+    assert again == {**first, "created": False, "operation_id": None}
     assert client.post("/api/hub/decks", json={"name": "Spagnolo::Verbi"}).json()["id"] == client.deck_id
     assert client.post("/api/hub/decks", json={"name": "a::::b"}).status_code == 422
 

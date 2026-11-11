@@ -1,18 +1,20 @@
 """Livello di servizio dell'hub delle flashcard (docs/PIANO-HUB.md): creazione di note da
-agenti, bozze, mazzi, anteprime e operazioni in blocco.
+agenti, mazzi, anteprime e operazioni in blocco.
 
 Niente FastAPI qui: le funzioni prendono la collezione già bloccata (`manager.use()`) e
-lanciano `HubError`, così le riusano sia le rotte REST sia il futuro server MCP.
-Lo scheduling resta quello di Anki: qui si creano note, si sospendono carte, si spostano.
+lanciano `HubError`, così le riusano sia le rotte REST sia il server MCP.
+Lo scheduling resta quello di Anki: qui si creano note, si spostano.
 
 Concetti (stessi del piano):
 
 - **Provenienza**: le note create da un token hanno il tag `agent::<slug>`.
 - **Idempotenza**: `external_id` diventa il tag `ext::<id>`; rimandare la stessa nota la
   aggiorna (o la lascia com'è) invece di duplicarla. Il tag viaggia con la sync.
-- **Bozze**: carte sospese + tag `hub::bozza`. Si approvano o si scartano dalla PWA.
-- **Una batch = una operazione annullabile**: tutte le scritture stanno sotto un'unica
-  voce di undo (`add_custom_undo_entry` + `merge_undo_entries`).
+- **Le note entrano subito** nella collezione, normali e attive. La rete di sicurezza è il
+  diario delle operazioni con annullamento (`app/journal.py`): ogni batch che scrive qualcosa
+  è una voce, e `operation_id` esce nell'esito.
+- **Una batch = una voce di undo di Anki** (`add_custom_undo_entry` + `merge_undo_entries`),
+  che lo studio non propone mai come «Annulla» (routers/study.py, `_StudyUndo`).
 """
 
 from __future__ import annotations
@@ -32,35 +34,29 @@ from anki.errors import NotFoundError
 from anki.notes import Note, NoteFieldsCheckResult
 from anki.utils import field_checksum, strip_html_media
 
+from . import journal as jr
 from .rendering import render_card
 from .schemas import (
     CardPreview,
-    DraftApproveOut,
-    DraftDiscardOut,
-    DraftList,
-    DraftNote,
     HubBatchIn,
     HubBatchOut,
     HubDeckOut,
     HubNoteIn,
     HubNoteResult,
-    HubSummary,
     MediaOut,
 )
 
 log = logging.getLogger(__name__)
 
-DRAFT_TAG = "hub::bozza"
 AGENT_PREFIX = "agent::"
 EXT_PREFIX = "ext::"
 # I tag riservati li mette solo l'hub: un agente non deve poter scrivere la provenienza
-# di un altro, togliere lo stato di bozza o prendersi l'`external_id` di un'altra nota
-RESERVED_PREFIXES = (AGENT_PREFIX, EXT_PREFIX, "hub::")
+# di un altro o prendersi l'`external_id` di un'altra nota
+RESERVED_PREFIXES = (AGENT_PREFIX, EXT_PREFIX)
 
 # Etichette delle voci di undo. Lo studio non le propone mai come "Annulla": offre solo
 # le operazioni che ha fatto lui (routers/study.py, `_StudyUndo`).
 UNDO_BATCH = "Aggiungi note da agente"
-UNDO_APPROVE = "Approva bozze"
 UNDO_TAGS = "Modifica i tag"
 
 # Tetti alle dimensioni: un agente (o uno script impazzito) non deve poter riempire la
@@ -105,7 +101,7 @@ def is_reserved(tag: str) -> bool:
     return tag.casefold().startswith(RESERVED_PREFIXES)
 
 
-# I "genitori" dei tag riservati: in Anki togliere `hub` toglie anche `hub::bozza`
+# I "genitori" dei tag riservati: in Anki togliere `agent` toglie anche `agent::claude`
 # (un tag e i suoi figli si trattano insieme), quindi vanno protetti allo stesso modo
 _RESERVED_PARENTS = frozenset(p.removesuffix("::") for p in RESERVED_PREFIXES)
 
@@ -121,15 +117,17 @@ def reserved_tags(tags: list[str]) -> set[str]:
     return {t.casefold() for t in clean_tags(tags) if is_reserved(t)}
 
 
+RESERVED_MESSAGE = (
+    "I tag «agent::» ed «ext::» li gestisce l'hub (provenienza e id dell'invio) e non si possono "
+    "aggiungere né togliere a mano"
+)
+
+
 def ensure_reserved_unchanged(existing: list[str], new: list[str]) -> None:
-    """La sessione può modificare i tag di una nota, ma non quelli riservati: toglierebbe una
-    bozza dall'Inbox lasciando le carte sospese per sempre, o falsificherebbe la provenienza
-    (`agent::`) e l'identità dell'invio (`ext::`). Per le bozze si usano Approva e Scarta."""
+    """La sessione può modificare i tag di una nota, ma non quelli riservati: falsificherebbe
+    la provenienza (`agent::`) o l'identità dell'invio (`ext::`)."""
     if reserved_tags(existing) != reserved_tags(new):
-        raise HubError(
-            "I tag «hub::», «agent::» ed «ext::» li gestisce l'hub e non si possono aggiungere né "
-            "togliere a mano (le bozze si approvano o si scartano dall'Inbox)"
-        )
+        raise HubError(RESERVED_MESSAGE)
 
 
 def user_tags(tags: list[str]) -> list[str]:
@@ -151,36 +149,9 @@ def is_own_note(tags: list[str], agent: str) -> bool:
 
 def merge_agent_tags(existing: list[str], incoming: list[str]) -> list[str]:
     """I tag di una nota dopo una modifica fatta da un token: i suoi tag normali sostituiscono
-    quelli vecchi, ma i riservati restano com'erano (non può togliere `hub::bozza`, cambiare
-    la provenienza o l'`external_id`) e quelli che prova ad aggiungere si ignorano."""
+    quelli vecchi, ma i riservati restano com'erano (non può cambiare la provenienza o
+    l'`external_id`) e quelli che prova ad aggiungere si ignorano."""
     return [t for t in existing if is_reserved(t)] + user_tags(incoming)
-
-
-def redraft(note: Note, *, review: bool) -> None:
-    """Un token con `review` non può modificare di nascosto una nota già approvata: se la
-    modifica cambia qualcosa, la nota torna in bozza (tag; le carte le sospende
-    `suspend_draft_cards` dopo il salvataggio). Un token senza `review` non cambia lo stato."""
-    if review and not has_tag(note.tags, DRAFT_TAG):
-        note.tags = [*note.tags, DRAFT_TAG]
-
-
-def suspend_draft_cards(col: Collection, note: Note) -> list[int]:
-    """Se la nota è una bozza, sospende TUTTE le sue carte non sospese: una modifica può
-    averne generate di nuove (aggiungere `{{c2::…}}` a una cloze) e quelle non devono entrare
-    nello studio prima dell'approvazione. Restituisce gli id di tutte le carte della nota."""
-    cards = [int(c) for c in note.card_ids()]
-    if has_tag(note.tags, DRAFT_TAG):
-        active = col.db.list(
-            f"select id from cards where nid = ? and queue != {_SUSPENDED}", note.id
-        )
-        if active:
-            col.sched.suspend_cards(active)
-    return cards
-
-
-def effective_draft(requested: bool | None, *, review: bool) -> bool:
-    """Un token con `review` ha sempre bozze; gli altri scelgono (default: note normali)."""
-    return True if review else bool(requested)
 
 
 # ---- mazzi ---------------------------------------------------------------------------
@@ -193,17 +164,27 @@ def normalize_deck_name(name: str) -> str:
     return "::".join(parts)
 
 
-def create_deck(col: Collection, name: str) -> HubDeckOut:
-    """Idempotente: se il mazzo esiste lo restituisce, `created=False`."""
+def create_deck(
+    col: Collection, name: str, *, journal: jr.Journal | None = None, actor: jr.Actor | None = None
+) -> HubDeckOut:
+    """Idempotente: se il mazzo esiste lo restituisce, `created=False`. Se lo crea (anche i genitori
+    che mancavano) e c'è un diario, l'operazione ci finisce: `operation_id` per l'annullamento."""
     name = normalize_deck_name(name)
     existing = col.decks.id_for_name(name)
     if existing:
         return HubDeckOut(id=existing, name=col.decks.name(existing), created=False)
+    before = jr.deck_snapshot(col)
     try:
         did = col.decks.add_normal_deck_with_name(name).id
     except Exception as e:  # noqa: BLE001 - il backend spiega perché (es. genitore filtrato)
         raise HubError(f"Impossibile creare il mazzo: {e}") from None
-    return HubDeckOut(id=did, name=col.decks.name(did), created=True)
+    operation_id = None
+    if journal is not None and actor is not None:
+        created = jr.new_decks(before, col)
+        operation_id = journal.record(
+            actor, "create_deck", jr.summary_for_decks([d.name or "" for d in created]), created
+        )
+    return HubDeckOut(id=did, name=col.decks.name(did), created=True, operation_id=operation_id)
 
 
 # ---- creazione in batch --------------------------------------------------------------
@@ -229,6 +210,9 @@ class _Item:
     note_id: int | None = None
     card_ids: list[int] = field(default_factory=list)
     dup_of: int | None = None  # indice di una nota della stessa batch
+    # nota da aggiornare: com'era PRIMA (solo i campi che cambiano, tag interi), per il diario
+    prev_fields: dict[str, str] = field(default_factory=dict)
+    prev_tags: list[str] = field(default_factory=list)
 
 
 def _error(index: int, message: str) -> _Item:
@@ -277,7 +261,7 @@ def _find_by_ext(col: Collection, ext_tag: str, agent: str | None) -> Note | Non
     """La nota con quel tag `ext::`. Un token vede solo le proprie: due agenti possono
     usare lo stesso `external_id` senza pestarsi i piedi.
 
-    Si cerca nel database con un LIKE sul tag intero (come `draft_ids`), non con la ricerca di
+    Si cerca nel database con un LIKE sul tag intero, non con la ricerca di
     Anki: lì `_` e `*` sono jolly (`ext::a_b` troverebbe anche `ext::axb`) e `tag:ext::x` trova
     anche i figli (`ext::x::y`)."""
     pattern = f"% {_like_escape(ext_tag)} %"
@@ -323,8 +307,6 @@ def _plan_note(
     *,
     batch: HubBatchIn,
     agent: str | None,
-    draft: bool,
-    review: bool,
     seen_ext: set[str],
     seen_first: dict[tuple[int, str], int],
 ) -> _Item:
@@ -353,7 +335,7 @@ def _plan_note(
         seen_ext.add(ext_tag.casefold())
         existing = _find_by_ext(col, ext_tag, agent)
         if existing is not None:
-            return _plan_update(index, existing, mid, spec, wanted_tags, review=review)
+            return _plan_update(index, existing, mid, spec, wanted_tags)
 
     try:
         deck = _resolve_deck(col, spec.deck, batch.create_missing_decks)
@@ -368,8 +350,6 @@ def _plan_note(
         tags.append(agent_tag(agent))
     if ext_tag:
         tags.append(ext_tag)
-    if draft:
-        tags.append(DRAFT_TAG)
     note.tags = tags
 
     message = _check_message(note, allow_duplicate=True)
@@ -396,15 +376,11 @@ def _plan_update(
     mid: int,
     spec: HubNoteIn,
     wanted_tags: list[str],
-    *,
-    review: bool,
 ) -> _Item:
     """`external_id` già presente: si aggiornano i campi passati e si aggiungono i tag
     nuovi (non si tolgono: li può aver messi l'utente). Il mazzo non si tocca: la nota potrebbe
-    essere stata spostata. Lo stato di bozza nemmeno, con una eccezione: se il token ha `review`
-    e la nota era già approvata, una modifica vera la RIMETTE in bozza (altrimenti basterebbe
-    rimandare lo stesso `external_id` per cambiare di nascosto una nota che l'utente ha
-    approvato). Se non cambia niente la nota resta com'è."""
+    essere stata spostata. Se non cambia niente la nota resta com'è. Lo stato di prima (campi
+    cambiati e tag) si tiene da parte per il diario, che lo usa per annullare."""
     if existing.mid != mid:
         return _error(index, "external_id già usato da una nota di un altro tipo")
     changed = {k: v for k, v in spec.fields.items() if existing[k] != v}
@@ -412,14 +388,23 @@ def _plan_update(
     card_ids = [int(c) for c in existing.card_ids()]
     if not changed and not new_tags:
         return _Item(index, "unchanged", note_id=existing.id, card_ids=card_ids)
+    prev_fields = {k: existing[k] for k in changed}
+    prev_tags = list(existing.tags)
     for k, v in changed.items():
         existing[k] = v
     existing.tags = [*existing.tags, *new_tags]
-    redraft(existing, review=review)
     message = _check_message(existing, allow_duplicate=True)
     if message:
         return _error(index, message)
-    return _Item(index, "updated", note=existing, note_id=existing.id, card_ids=card_ids)
+    return _Item(
+        index,
+        "updated",
+        note=existing,
+        note_id=existing.id,
+        card_ids=card_ids,
+        prev_fields=prev_fields,
+        prev_tags=prev_tags,
+    )
 
 
 def check_field_sizes(fields: dict[str, str], *, where: str = "") -> None:
@@ -447,13 +432,17 @@ def check_batch_size(body: HubBatchIn) -> None:
 
 
 def create_batch(
-    col: Collection, body: HubBatchIn, *, agent: str | None = None, review: bool = False
+    col: Collection,
+    body: HubBatchIn,
+    *,
+    agent: str | None = None,
+    journal: jr.Journal | None = None,
+    actor: jr.Actor | None = None,
 ) -> HubBatchOut:
     """Crea (o aggiorna) fino a 100 note. Ogni nota ha il suo esito: un errore non ferma
-    le altre. `agent` è lo slug del token (provenienza), `review` il suo flag: se vero le
-    note sono sempre bozze. Con `dry_run` non si scrive niente."""
+    le altre. `agent` è lo slug del token (provenienza). Con `dry_run` non si scrive niente.
+    Se si scrive qualcosa e c'è un diario, l'operazione ci finisce (`operation_id`)."""
     check_batch_size(body)
-    draft = effective_draft(body.draft, review=review)
 
     seen_ext: set[str] = set()
     seen_first: dict[tuple[int, str], int] = {}
@@ -464,16 +453,18 @@ def create_batch(
             spec,
             batch=body,
             agent=agent,
-            draft=draft,
-            review=review,
             seen_ext=seen_ext,
             seen_first=seen_first,
         )
         for i, spec in enumerate(body.notes)
     ]
 
+    operation_id = None
     if not body.dry_run and any(it.status in ("created", "updated") for it in items):
-        _apply(col, items, draft=draft)
+        decks_before = jr.deck_snapshot(col)
+        _apply(col, items)
+        if journal is not None and actor is not None:
+            operation_id = _record_batch(col, journal, actor, items, jr.new_decks(decks_before, col))
 
     # il duplicato di una nota della stessa batch punta all'id che ha avuto davvero
     for it in items:
@@ -493,17 +484,42 @@ def create_batch(
     count = lambda s: sum(1 for r in results if r.status == s)  # noqa: E731
     return HubBatchOut(
         dry_run=body.dry_run,
-        draft=draft,
         created=count("created"),
         updated=count("updated"),
         unchanged=count("unchanged"),
         duplicates=count("duplicate"),
         errors=count("error"),
         results=results,
+        operation_id=operation_id,
     )
 
 
-def _apply(col: Collection, items: list[_Item], *, draft: bool) -> None:
+def _record_batch(
+    col: Collection, journal: jr.Journal, actor: jr.Actor, items: list[_Item], decks: list[jr.Item]
+) -> str | None:
+    """Una voce nel diario per ciò che la batch ha scritto davvero (gli elementi con errore no)."""
+    entries: list[jr.Item] = []
+    deck_names: list[str] = []
+    created = updated = 0
+    for it in items:
+        if it.note_id is None or it.status not in ("created", "updated"):
+            continue
+        note = col.get_note(it.note_id)  # riletta: `mod` e tag veri dopo la scrittura
+        if it.status == "created":
+            created += 1
+            entries.append(jr.item_created(note))
+            name = first_deck_name(col, note.id)
+            if name and name not in deck_names:
+                deck_names.append(name)
+        else:
+            updated += 1
+            entries.append(jr.item_updated(note, it.prev_fields, it.prev_tags))
+    entries += decks
+    summary = jr.summary_for_notes(created, updated, deck_names, len(decks))
+    return journal.record(actor, "add_notes", summary, entries)
+
+
+def _apply(col: Collection, items: list[_Item]) -> None:
     """Scrive tutto sotto un'unica voce di undo. Una nota alla volta (`add_note`, non
     `add_notes`): le note successive vedono quelle appena create e un errore del backend
     su una nota (es. mazzo non creabile) diventa il suo esito, senza perdere le altre.
@@ -526,18 +542,11 @@ def _apply(col: Collection, items: list[_Item], *, draft: bool) -> None:
                     did = new_decks[did]
                 col.add_note(it.note, did)  # type: ignore[arg-type]
                 col.merge_undo_entries(target)
-                cards = [int(c) for c in it.note.card_ids()]
-                if draft:
-                    col.sched.suspend_cards(cards)
-                    col.merge_undo_entries(target)
-                it.note_id, it.card_ids = it.note.id, cards
+                it.note_id, it.card_ids = it.note.id, [int(c) for c in it.note.card_ids()]
             else:
                 col.update_note(it.note)
                 col.merge_undo_entries(target)
-                # una nota in bozza (anche appena rimessa in bozza) non deve avere carte attive,
-                # nemmeno quelle nuove generate dalla modifica
-                it.card_ids = suspend_draft_cards(col, it.note)
-                col.merge_undo_entries(target)
+                it.card_ids = [int(c) for c in it.note.card_ids()]
         except Exception as e:  # noqa: BLE001 - l'esito è per nota, la batch continua
             log.warning("Nota della batch non scritta: %s", e)
             it.status, it.error, it.note_id, it.card_ids = "error", str(e), None, []
@@ -545,25 +554,11 @@ def _apply(col: Collection, items: list[_Item], *, draft: bool) -> None:
                 col.merge_undo_entries(target)
 
 
-# ---- bozze ---------------------------------------------------------------------------
+# ---- utilità ---------------------------------------------------------------------------
 
 
 def _ids_sql(ids) -> str:
     return "(" + ",".join(str(int(i)) for i in ids) + ")"
-
-
-def draft_ids(col: Collection) -> list[int]:
-    """Le note in bozza, dalla più recente. Il tag è confrontato per intero (con gli spazi
-    attorno, come li salva Anki): `hub::bozza::x` non è una bozza."""
-    return list(
-        col.db.list("select id from notes where tags like '% hub::bozza %' order by mod desc, id desc")
-    )
-
-
-def summary(col: Collection) -> HubSummary:
-    return HubSummary(
-        drafts=col.db.scalar("select count() from notes where tags like '% hub::bozza %'")
-    )
 
 
 def first_deck_name(col: Collection, nid: int) -> str | None:
@@ -572,105 +567,6 @@ def first_deck_name(col: Collection, nid: int) -> str | None:
         return None
     did, odid = row
     return col.decks.name(odid or did)
-
-
-def _agent_of(tags: list[str]) -> str | None:
-    for t in tags:
-        if t.casefold().startswith(AGENT_PREFIX):
-            return t[len(AGENT_PREFIX):]
-    return None
-
-
-def list_drafts(col: Collection, limit: int, offset: int) -> DraftList:
-    ids = draft_ids(col)
-    notes: list[DraftNote] = []
-    for nid in ids[offset : offset + limit]:
-        note = col.get_note(nid)
-        notes.append(
-            DraftNote(
-                id=note.id,
-                notetype_id=note.mid,
-                notetype_name=note.note_type()["name"],
-                fields=dict(note.items()),
-                tags=list(note.tags),
-                deck_name=first_deck_name(col, nid),
-                card_ids=[int(c) for c in note.card_ids()],
-                agent=_agent_of(note.tags),
-                created=nid // 1000,
-                modified=note.mod,
-            )
-        )
-    return DraftList(total=len(ids), notes=notes)
-
-
-def _triage(
-    col: Collection, note_ids: list[int], expected_mod: dict[int, int] | None
-) -> tuple[list[int], list[int]]:
-    """Divide gli id chiesti in (da trattare, da saltare). Si salta ciò che non è (più) una
-    bozza o non esiste, e ciò che è cambiato dopo che l'utente l'ha visto (`expected_mod`):
-    un agente può aggiornare una bozza tra l'apertura dell'Inbox e il tocco su «Approva»,
-    e l'utente non deve approvare o cancellare contenuto che non ha letto."""
-    wanted = list(dict.fromkeys(note_ids))
-    drafts = set(draft_ids(col))
-    mods = dict(col.db.execute(f"select id, mod from notes where id in {_ids_sql(wanted)}"))
-    ids: list[int] = []
-    skipped: list[int] = []
-    for nid in wanted:
-        seen = expected_mod.get(nid) if expected_mod else None
-        if nid not in drafts or (seen is not None and mods.get(nid) != seen):
-            skipped.append(nid)
-        else:
-            ids.append(nid)
-    return ids, skipped
-
-
-def approve_drafts(
-    col: Collection, note_ids: list[int], expected_mod: dict[int, int] | None = None
-) -> DraftApproveOut:
-    """Bozza → nota normale: carte riattivate e tag tolto. Un'unica voce di undo. Gli id che
-    non sono bozze o sono cambiati dopo `expected_mod` non si toccano e vanno in `skipped_ids`."""
-    ids, skipped = _triage(col, note_ids, expected_mod)
-    if not ids:
-        return DraftApproveOut(approved=0, skipped_ids=skipped)
-    target = col.add_custom_undo_entry(UNDO_APPROVE)
-    try:
-        cards = col.db.list(
-            f"select id from cards where nid in {_ids_sql(ids)} and queue = {_SUSPENDED}"
-        )
-        if cards:
-            col.sched.unsuspend_cards(cards)
-        col.tags.bulk_remove(ids, DRAFT_TAG)
-    finally:
-        col.merge_undo_entries(target)
-    return DraftApproveOut(approved=len(ids), skipped_ids=skipped)
-
-
-def _is_untouched_draft(col: Collection, nid: int) -> bool:
-    """Tutte le carte sospese e mai ripassate (né una risposta in `revlog`). Il tag
-    `hub::bozza` lo può mettere chiunque (a mano, da Anki desktop, da un altro dispositivo
-    dopo la sync): da solo non basta per cancellare una nota con la sua storia di ripassi."""
-    studied = col.db.scalar(
-        f"select count() from cards where nid = ? and (queue != {_SUSPENDED} or reps != 0 or type != 0)",
-        nid,
-    )
-    if studied:
-        return False
-    return not col.db.scalar(
-        "select count() from revlog where cid in (select id from cards where nid = ?)", nid
-    )
-
-
-def discard_drafts(
-    col: Collection, note_ids: list[int], expected_mod: dict[int, int] | None = None
-) -> DraftDiscardOut:
-    """Cancella SOLO bozze vere: con `hub::bozza`, carte tutte sospese e mai ripassate
-    (regola 1: nessun dato perso senza una scelta esplicita). Il resto va in `skipped_ids`."""
-    ids, skipped = _triage(col, note_ids, expected_mod)
-    safe = [i for i in ids if _is_untouched_draft(col, i)]
-    skipped += [i for i in ids if i not in safe]
-    if safe:
-        col.remove_notes(safe)  # type: ignore[arg-type]
-    return DraftDiscardOut(discarded=len(safe), skipped_ids=skipped)
 
 
 # ---- anteprima, spostamento, cancellazione, tag --------------------------------------
@@ -722,14 +618,11 @@ def delete_note(col: Collection, note_id: int) -> None:
 
 def change_tags(col: Collection, note_ids: list[int], add: list[str], remove: list[str]) -> int:
     """Aggiunge e toglie tag a più note (una sola voce di undo). Restituisce quante note
-    sono cambiate davvero; gli id che non esistono si ignorano. I tag riservati (`hub::`,
-    `agent::`, `ext::`) non si toccano da qui, nemmeno togliendo il genitore (`hub`)."""
+    sono cambiate davvero; gli id che non esistono si ignorano. I tag riservati (`agent::`,
+    `ext::`) non si toccano da qui, nemmeno togliendo il genitore (`agent`, `ext`)."""
     add, remove = clean_tags(add), clean_tags(remove)
     if any(is_reserved(t) for t in add) or any(touches_reserved(t) for t in remove):
-        raise HubError(
-            "I tag «hub::», «agent::» ed «ext::» li gestisce l'hub e non si possono aggiungere né "
-            "togliere a mano (le bozze si approvano o si scartano dall'Inbox)"
-        )
+        raise HubError(RESERVED_MESSAGE)
     ids = list(dict.fromkeys(col.db.list(f"select id from notes where id in {_ids_sql(note_ids)}")))
     if not ids or not (add or remove):
         return 0
