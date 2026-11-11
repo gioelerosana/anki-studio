@@ -145,7 +145,7 @@ def update_note(
                 raise hub_http_error(e)
         elif body.tags is not None:
             # la sessione può cambiare i tag normali, ma non quelli dell'hub (la PWA rimanda
-            # quelli che la nota ha già): per le bozze ci sono Approva e Scarta
+            # quelli che la nota ha già): provenienza e idempotenza non si toccano a mano
             try:
                 hub.ensure_reserved_unchanged(note.tags, body.tags)
             except hub.HubError as e:
@@ -214,7 +214,7 @@ def change_tags(
     sync: SyncService = Depends(get_sync),
 ):
     """Aggiunge e/o toglie tag a più note in un colpo solo (un'unica voce di undo). I tag
-    `hub::…`, `agent::…` ed `ext::…` sono riservati: 422."""
+    `agent::…` ed `ext::…` sono riservati: 422."""
     with manager.use() as col:
         try:
             updated = hub.change_tags(col, body.note_ids, body.add, body.remove)

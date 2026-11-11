@@ -126,6 +126,8 @@ export interface Note {
   fields: Record<string, string>;
   tags: string[];
   card_ids: number[];
+  /** Solo nella risposta di `PATCH /notes/{id}` quando la modifica di un agente ha cambiato qualcosa: id dell'operazione annullabile. */
+  operation_id?: string | null;
 }
 
 export interface SyncResult {
