@@ -75,6 +75,19 @@ Nello stack principale con l'immagine pubblicata e pinnata per digest: vedi
 [deploy/stack/README.md](deploy/stack/README.md), che spiega anche come spostare lì i dati
 del deploy di prova.
 
+### Collegare gli agenti (Claude e Hermes)
+
+Lo stesso processo espone un server MCP su `/mcp`: gli agenti creano le flashcard direttamente nella
+collezione (note normali, subito attive) e poi viaggiano su AnkiWeb con la sync. Ogni loro operazione
+finisce in un diario e si può annullare dalla PWA (o dagli stessi agenti, con `undo_operation`), purché
+la nota non sia stata toccata o studiata nel frattempo. L'**app Claude**
+(web, desktop, mobile) si collega come connettore personalizzato con OAuth su Authentik (un
+secondo provider, `deploy/stack/auth/blueprints/anki-studio-mcp.yaml`); **Hermes Agent** e gli
+script usano un token `Bearer ask_…` creato nella PWA (Impostazioni → Agenti). Per l'app Claude
+`/mcp` e Authentik devono essere raggiungibili da internet, non solo da Tailscale. Passi,
+requisiti di rete e risoluzione dei problemi: [deploy/stack/README.md](deploy/stack/README.md#collegare-gli-agenti-claude-e-hermes).
+Il disegno è in [docs/PIANO-HUB.md](docs/PIANO-HUB.md).
+
 ## Pubblicazione
 
 La CI (`.github/workflows/ci.yml`) gira su ogni PR e push: typecheck e build della PWA, pytest,

@@ -18,6 +18,8 @@ import type { TodayStats } from '../api/types';
 import { useAuth } from '../app/auth';
 import { formatDuration, formatRelative } from '../app/format';
 import { navigate } from '../app/route';
+import { AgentsSection } from '../agents/AgentsSection';
+import { Group, Row } from '../components/SettingsParts';
 import { useSettings, type ThemePreference } from '../settings';
 import { useSync } from '../sync/SyncProvider';
 
@@ -112,6 +114,8 @@ export function SettingsScreen() {
             </button>
           </Group>
 
+          <AgentsSection />
+
           <Group title="Account">
             <Row label={user?.name || 'Account Authentik'} hint={user?.username ? `Accesso con Authentik come ${user.username}` : 'Accesso con Authentik'}>
               <Button variant="destructive-outline" icon={<LogOut />} onClick={() => setConfirmLogout(true)} className="coarse:h-10">
@@ -158,27 +162,6 @@ export function SettingsScreen() {
       >
         {null}
       </Modal>
-    </div>
-  );
-}
-
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h2>
-      <div className="overflow-hidden rounded-lg border bg-card">{children}</div>
-    </section>
-  );
-}
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b px-4 py-3 last:border-b-0 coarse:min-h-14">
-      <div className="flex min-w-0 flex-col">
-        <span className="text-sm">{label}</span>
-        {hint ? <span className="text-2xs text-muted-foreground">{hint}</span> : null}
-      </div>
-      <div className="shrink-0">{children}</div>
     </div>
   );
 }

@@ -7,8 +7,8 @@
  * sorprese. Il pulsante «Cloze» sostituisce la scorciatoia Ctrl+Shift+C di Anki.
  */
 import { useRef } from 'react';
-import { Brackets } from 'lucide-react';
-import { Button, Field, Input, Textarea } from '@anki-studio/ui-kit';
+import { Brackets, Lock } from 'lucide-react';
+import { Badge, Button, Field, Input, Textarea } from '@anki-studio/ui-kit';
 import type { NotetypeField } from '../api/types';
 
 export function nextClozeNumber(values: Record<string, string>): number {
@@ -95,18 +95,47 @@ export function NoteFields({
   );
 }
 
-export function TagsInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+/**
+ * Tag modificabili in un campo di testo; quelli riservati dell'hub (`agent::…`, `ext::…`)
+ * stanno sotto come etichette bloccate, senza «x», e non si possono digitare.
+ */
+export function TagsInput({
+  value,
+  onChange,
+  reserved = [],
+  typedReserved = [],
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  reserved?: string[];
+  typedReserved?: string[];
+}) {
   return (
-    <Field label="Tag" hint="Separati da spazi">
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        size="lg"
-      />
-    </Field>
+    <div className="flex flex-col gap-2">
+      <Field
+        label="Tag"
+        hint="Separati da spazi"
+        error={typedReserved.length > 0 ? `${typedReserved.join(', ')}: i tag agent:: ed ext:: li gestisce l’app e non si possono aggiungere.` : undefined}
+      >
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          size="lg"
+        />
+      </Field>
+      {reserved.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Tag riservati, non modificabili">
+          {reserved.map((t) => (
+            <Badge key={t} variant="secondary" icon={<Lock />} title="Tag gestito dall’app: non si può togliere da qui">
+              {t}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

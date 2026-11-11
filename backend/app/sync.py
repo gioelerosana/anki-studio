@@ -85,12 +85,17 @@ class SyncService:
         endpoint: str | None = None,
         backup_dir: Path | None = None,
         io_timeout_secs: int | None = None,
+        after_write_seconds: float = 0,
     ) -> None:
         self.manager = manager
         self.auth_path = auth_path
         self.endpoint = normalize_endpoint(endpoint)
         self.backup_dir = backup_dir
         self.io_timeout_secs = io_timeout_secs
+        # sync "a breve" dopo una scrittura (agenti, hub): vedi request_soon(). 0 = spenta
+        self.after_write_seconds = after_write_seconds
+        self._soon_lock = threading.Lock()
+        self._soon_timer: threading.Timer | None = None
 
         self._run_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -265,6 +270,50 @@ class SyncService:
         finally:
             self._set_running(None)
             self._run_lock.release()
+
+    def request_soon(self) -> bool:
+        """Chiede una sync a breve dopo una scrittura, senza bloccare chi chiama.
+
+        Debounce a finestra fissa: la prima richiesta arma un timer di
+        `after_write_seconds`, quelle successive mentre il timer è armato si
+        accodano alla stessa sync (cento note da un agente = una sync sola).
+        Niente da fare se la spia è spenta (0), se AnkiWeb non è collegato o se
+        l'ultima sync ha trovato un conflitto che deve risolvere l'utente.
+        Torna True se un timer è armato.
+        """
+        if self.after_write_seconds <= 0 or not self.logged_in or self.full_sync_required:
+            return False
+        with self._soon_lock:
+            if self._soon_timer is not None:
+                return True
+            timer = threading.Timer(self.after_write_seconds, self._sync_after_write)
+            timer.daemon = True
+            self._soon_timer = timer
+            timer.start()
+            return True
+
+    def _sync_after_write(self) -> None:
+        with self._soon_lock:
+            self._soon_timer = None
+        try:
+            # wait=True: se c'è già una sync in corso aspetta il suo turno (una alla volta)
+            # e poi ne fa una sua, che di solito trova poco da fare ma prende la scrittura
+            result = self.sync(wait=True, quick=True)
+        except Exception:  # noqa: BLE001 - è un thread di servizio: non deve morire in silenzio
+            log.exception("Sync dopo la scrittura fallita")
+            return
+        if result is not None:
+            log.info(
+                "Sync dopo la scrittura",
+                extra={"outcome": str(result.outcome), "error_kind": str(result.error_kind)},
+            )
+
+    def cancel_pending(self) -> None:
+        """Allo spegnimento: niente timer pendenti (l'ultima sync la fa il lifespan)."""
+        with self._soon_lock:
+            if self._soon_timer is not None:
+                self._soon_timer.cancel()
+                self._soon_timer = None
 
     def _not_logged_in(self) -> SyncResult:
         if self.endpoint_mismatch:

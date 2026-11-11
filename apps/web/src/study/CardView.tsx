@@ -6,7 +6,8 @@
  * nello scroll della pagina; con un iframe servirebbero ridimensionamento e
  * messaggi per ogni tap. Il CSS del tipo di nota resta chiuso nello shadow root
  * e quello dell'app non entra (`:host { all: initial }`); gli script non girano
- * perché l'HTML passa da `sanitizeCardHtml`.
+ * perché l'HTML passa da `sanitizeCardHtml`. Il riquadro contiene anche il disegno
+ * (`contain: paint`): niente che esca o copra l'interfaccia.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { BASE_CARD_CSS, NIGHT_FALLBACK_CSS, prepareCardCss, sanitizeCardHtml } from './cardContent';
@@ -27,6 +28,8 @@ const FONT_STYLE_ID = 'anki-card-fonts';
 
 let mathModule: Promise<typeof import('./math')> | null = null;
 const loadMath = () => (mathModule ??= import('./math'));
+
+const CONTAINED = { contain: 'paint', isolation: 'isolate' } as const;
 
 export function CardView({ html, css, cardClass, dark, onTap, onPlay, className }: CardViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -105,5 +108,8 @@ export function CardView({ html, css, cardClass, dark, onTap, onPlay, className 
     return () => host.removeEventListener('click', onClick);
   }, []);
 
-  return <div ref={hostRef} className={className} />;
+  // `contain: paint` + `isolation` in linea (e non nel CSS dello shadow root, che il tipo di nota
+  // può sovrascrivere): un `position: fixed` o uno z-index enorme nella carta restano dentro il
+  // suo riquadro, così un'anteprima nella libreria non può coprire i pulsanti della vista.
+  return <div ref={hostRef} className={className} style={CONTAINED} />;
 }

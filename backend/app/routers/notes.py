@@ -1,12 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from anki.collection import Collection
 from anki.consts import MODEL_CLOZE
 from anki.notes import Note, NoteFieldsCheckResult
 
+from .. import hub
+from .. import journal as jr
 from ..collection import CollectionManager
-from ..deps import get_manager
-from ..schemas import NoteIn, NoteOut, Notetype, NotetypeField, NoteUpdate
+from ..deps import get_identity, get_journal, get_manager, get_sync
+from ..schemas import (
+    NoteIn,
+    NoteMoveIn,
+    NoteOut,
+    Notetype,
+    NotetypeField,
+    NoteTagsIn,
+    NoteTagsOut,
+    NoteUpdate,
+)
+from ..security import Identity
+from ..sync import SyncService
+from .hub import hub_http_error
 
 router = APIRouter(tags=["notes"])
 
@@ -76,7 +90,11 @@ def _get_note(col: Collection, note_id: int) -> Note:
 
 
 @router.post("/notes", response_model=NoteOut, status_code=201)
-def create_note(body: NoteIn, manager: CollectionManager = Depends(get_manager)):
+def create_note(
+    body: NoteIn,
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+):
     with manager.use() as col:
         model = col.models.get(body.notetype_id)
         if model is None:
@@ -88,7 +106,9 @@ def create_note(body: NoteIn, manager: CollectionManager = Depends(get_manager))
         note.tags = body.tags
         _check(note)
         col.add_note(note, body.deck_id)
-        return _note_out(note)
+        out = _note_out(note)
+    sync.request_soon()
+    return out
 
 
 @router.get("/notes/{note_id}", response_model=NoteOut)
@@ -99,14 +119,107 @@ def get_note(note_id: int, manager: CollectionManager = Depends(get_manager)):
 
 @router.patch("/notes/{note_id}", response_model=NoteOut)
 def update_note(
-    note_id: int, body: NoteUpdate, manager: CollectionManager = Depends(get_manager)
+    note_id: int,
+    body: NoteUpdate,
+    identity: Identity = Depends(get_identity),
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+    ops: jr.Journal = Depends(get_journal),
 ):
+    """Modifica campi e/o tag. Se cambia davvero qualcosa l'operazione finisce nel diario
+    (`app/journal.py`) e la risposta porta `operation_id`, da dare a `POST /hub/operations/{id}/undo`."""
     with manager.use() as col:
         note = _get_note(col, note_id)
+        if identity.scoped:
+            # un token write (o l'OAuth di /mcp) modifica solo le note che ha creato lui (tag agent::<nome>) e
+            # non può toccare i tag riservati: non può cambiare la provenienza né l'`external_id`
+            if not (identity.agent and hub.is_own_note(note.tags, identity.agent)):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Il token può modificare solo le note create da lui"
+                )
+            if body.tags is not None:
+                body = body.model_copy(update={"tags": hub.merge_agent_tags(note.tags, body.tags)})
+            try:
+                hub.check_field_sizes(body.fields or {})
+            except hub.HubError as e:
+                raise hub_http_error(e)
+        elif body.tags is not None:
+            # la sessione può cambiare i tag normali, ma non quelli dell'hub (la PWA rimanda
+            # quelli che la nota ha già): provenienza e idempotenza non si toccano a mano
+            try:
+                hub.ensure_reserved_unchanged(note.tags, body.tags)
+            except hub.HubError as e:
+                raise hub_http_error(e)
+        prev_fields, prev_tags = dict(note.items()), list(note.tags)
         if body.fields is not None:
             _apply_fields(note, body.fields)
         if body.tags is not None:
             note.tags = body.tags
         _check(note, allow_duplicate=True)
         col.update_note(note)
-        return _note_out(note)
+        # riletta: i tag canonici e il `mod` veri, dopo la scrittura di Anki
+        fresh = col.get_note(note.id)
+        out = _note_out(fresh)
+        changed = [k for k, v in prev_fields.items() if fresh[k] != v]
+        tags_changed = prev_tags != list(fresh.tags)
+        if changed or tags_changed:
+            out.operation_id = ops.record(
+                identity.actor,
+                "update_note",
+                jr.summary_for_update(fresh.id, changed, tags_changed),
+                [jr.item_updated(fresh, {k: prev_fields[k] for k in changed}, prev_tags)],
+            )
+    sync.request_soon()
+    return out
+
+
+@router.post("/notes/{note_id}/move", response_model=NoteOut)
+def move_note(
+    note_id: int,
+    body: NoteMoveIn,
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+):
+    """Sposta tutte le carte della nota nel mazzo."""
+    with manager.use() as col:
+        try:
+            note = hub.move_note(col, note_id, body.deck_id)
+        except hub.HubError as e:
+            raise hub_http_error(e)
+        out = _note_out(note)
+    sync.request_soon()
+    return out
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+def delete_note(
+    note_id: int,
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+):
+    """Cancella la nota con tutte le sue carte (la PWA chiede conferma prima)."""
+    with manager.use() as col:
+        try:
+            hub.delete_note(col, note_id)
+        except hub.HubError as e:
+            raise hub_http_error(e)
+    sync.request_soon()
+    return Response(status_code=204)
+
+
+@router.post("/notes/tags", response_model=NoteTagsOut)
+def change_tags(
+    body: NoteTagsIn,
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+):
+    """Aggiunge e/o toglie tag a più note in un colpo solo (un'unica voce di undo). I tag
+    `agent::…` ed `ext::…` sono riservati: 422."""
+    with manager.use() as col:
+        try:
+            updated = hub.change_tags(col, body.note_ids, body.add, body.remove)
+        except hub.HubError as e:  # tag riservati dell'hub
+            raise hub_http_error(e)
+    if updated:
+        sync.request_soon()
+    return NoteTagsOut(updated=updated)

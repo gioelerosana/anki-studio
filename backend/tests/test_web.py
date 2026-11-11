@@ -128,6 +128,53 @@ def test_api_never_falls_back_to_pwa(web_client: TestClient):
     assert web_client.get("/api/decks").status_code == 401
 
 
+MCP_ISSUER = "https://auth.example.test/application/o/anki-studio-mcp/"
+
+
+def web_client_with(seeded, web_dir, **overrides):
+    settings, _ = seeded
+    settings = settings.model_copy(update={"anki_web_dir": web_dir, **overrides})
+    return TestClient(create_app(settings))
+
+
+def test_mcp_and_well_known_never_fall_back_to_pwa(seeded, web_dir):
+    """Un 200 HTML su /mcp o sui metadati OAuth farebbe ignorare a Claude il WWW-Authenticate:
+    questi percorsi sono del backend, mai della PWA (come /api)."""
+    oauth = {
+        "anki_public_url": "https://anki.test",
+        "anki_mcp_oidc_issuer": MCP_ISSUER,
+        "anki_mcp_oidc_client_id": "anki-mcp",
+    }
+    with web_client_with(seeded, web_dir, **oauth) as c:
+        for path in ("/mcp", "/mcp/"):
+            r = c.get(path, follow_redirects=False)
+            assert r.status_code == 401, path
+            assert r.text != INDEX and "resource_metadata" in r.headers["www-authenticate"]
+            r = c.post(path, json={}, follow_redirects=False)
+            assert r.status_code == 401, path
+        for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+            r = c.get(path)
+            assert r.status_code == 200 and r.json()["resource"] == "https://anki.test/mcp", path
+        # il resto sotto questi prefissi è un 404 vero, non la PWA
+        for path in ("/mcp/altro", "/.well-known/oauth-authorization-server", "/.well-known/nonesiste"):
+            r = c.get(path)
+            assert r.status_code == 404 and r.text != INDEX, path
+        # e le rotte vicine restano della PWA
+        assert c.get("/mcpx").text == INDEX and c.get("/well-known/x").text == INDEX
+
+
+def test_mcp_paths_are_404_not_pwa_when_disabled_or_without_oauth(seeded, web_dir):
+    with web_client_with(seeded, web_dir, anki_mcp_enabled=False) as c:
+        for path in ("/mcp", "/mcp/", "/.well-known/oauth-protected-resource"):
+            r = c.get(path)
+            assert r.status_code == 404 and r.text != INDEX, path
+    with web_client_with(seeded, web_dir) as c:  # MCP acceso ma senza OAuth
+        assert c.get("/.well-known/oauth-protected-resource").status_code == 404
+        assert c.get("/.well-known/oauth-protected-resource/mcp").text != INDEX
+        r = c.post("/mcp", json={})
+        assert r.status_code == 401 and r.headers["www-authenticate"] == "Bearer"
+
+
 def test_api_headers_unchanged(web_client: TestClient):
     r = web_client.get("/api/decks", headers={"Authorization": f"Bearer {TOKEN}"})
     assert r.status_code == 200

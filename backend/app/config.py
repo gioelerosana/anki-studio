@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     # (se la sessione di Authentik è ancora valida, senza chiedere niente).
     anki_session_days: float = 30
 
+    # ---- server MCP (/mcp, docs/PIANO-HUB.md) --------------------------------------
+    # Spento = niente /mcp né .well-known. Gli accessi sono due: i token `ask_…` (e il vecchio
+    # ANKI_API_TOKEN) e, per l'app Claude, OAuth con un SECONDO provider Authentik. Il backend
+    # non è il client OAuth di quel provider (lo è Claude): riceve solo i JWT e ne verifica la
+    # firma con il JWKS, quindi non ha un client secret.
+    anki_mcp_enabled: bool = True
+    # Issuer del provider/applicazione per Claude, es.
+    # https://auth.jshep.xyz/application/o/anki-studio-mcp/ (solo https). Vuoto = niente OAuth.
+    anki_mcp_oidc_issuer: str | None = None
+    # Client ID del provider: è il valore atteso nell'`aud` dei JWT (non l'URL della risorsa)
+    anki_mcp_oidc_client_id: str | None = None
+
     # Solo sviluppo, senza Authentik: /api/auth/login apre subito una sessione "dev".
     # Rifiutato se il processo serve anche la PWA (ANKI_WEB_DIR, cioè l'immagine Docker).
     anki_dev_login: bool = False
@@ -50,6 +62,9 @@ class Settings(BaseSettings):
     anki_cors_origins: str = ""
     anki_auto_sync_minutes: float = 10
     anki_sync_on_startup: bool = True
+    # Dopo una scrittura da agente (o dalle rotte hub) la sync parte da sola dopo questi
+    # secondi, con più scritture raggruppate in una sola sync. 0 = spenta.
+    anki_sync_after_write_seconds: float = Field(default=30, ge=0)
 
     # Server di sync: vuoto = AnkiWeb. Per un server self-hosted (anche quello
     # incluso nel pacchetto `anki`, python -m anki.syncserver) es. http://host:8080/
@@ -90,6 +105,8 @@ class Settings(BaseSettings):
         "anki_oidc_issuer",
         "anki_oidc_client_id",
         "anki_public_url",
+        "anki_mcp_oidc_issuer",
+        "anki_mcp_oidc_client_id",
         mode="before",
     )
     @classmethod
@@ -128,6 +145,25 @@ class Settings(BaseSettings):
             raise ValueError("deve essere un URL http(s)://")
         return v
 
+    @field_validator("anki_mcp_oidc_issuer")
+    @classmethod
+    def _https_issuer(cls, v: str | None) -> str | None:
+        # i JWT valgono quanto il canale da cui arrivano le chiavi di verifica: solo TLS,
+        # senza eccezioni (nemmeno localhost: i test non fanno rete, usano un JWKS finto)
+        if v is not None and not v.startswith("https://"):
+            raise ValueError("ANKI_MCP_OIDC_ISSUER deve essere https://")
+        return v
+
+    @model_validator(mode="after")
+    def _mcp_oauth_complete(self):
+        mcp = (self.anki_mcp_oidc_issuer, self.anki_mcp_oidc_client_id)
+        if any(mcp) and not (all(mcp) and self.anki_public_url):
+            raise ValueError(
+                "OAuth di /mcp incompleto: servono ANKI_PUBLIC_URL, ANKI_MCP_OIDC_ISSUER "
+                "e ANKI_MCP_OIDC_CLIENT_ID"
+            )
+        return self
+
     @model_validator(mode="after")
     def _oidc_complete(self):
         oidc = (self.anki_oidc_issuer, self.anki_oidc_client_id, self.anki_oidc_client_secret)
@@ -141,6 +177,15 @@ class Settings(BaseSettings):
     @property
     def oidc_enabled(self) -> bool:
         return bool(self.anki_oidc_issuer)
+
+    @property
+    def mcp_oauth_enabled(self) -> bool:
+        return self.anki_mcp_enabled and bool(self.anki_mcp_oidc_issuer)
+
+    @property
+    def mcp_resource_url(self) -> str | None:
+        """L'URL che l'utente inserisce in Claude, senza slash finale: è la `resource` dei metadati."""
+        return self.anki_public_url.rstrip("/") + "/mcp" if self.anki_public_url else None
 
     @property
     def public_origin(self) -> str | None:
@@ -170,6 +215,15 @@ class Settings(BaseSettings):
     @property
     def sync_auth_path(self) -> Path:
         return self.anki_data_dir / "sync_auth.json"
+
+    @property
+    def tokens_path(self) -> Path:
+        return self.anki_data_dir / "tokens.json"
+
+    @property
+    def journal_path(self) -> Path:
+        """Il diario delle operazioni degli agenti (app/journal.py)."""
+        return self.anki_data_dir / "agent-ops.json"
 
     @property
     def backup_dir(self) -> Path:

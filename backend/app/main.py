@@ -2,24 +2,36 @@ import asyncio
 import logging
 import random
 import time
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import anki.lang
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from .collection import CollectionBusy, CollectionManager
 from .config import Settings, get_settings
+from .journal import Journal
 from .logging_setup import register_secret, setup_logging
-from .routers import auth, browse, decks, media, notes, study, sync
+from .routers import auth, browse, decks, hub, media, notes, study, sync, tokens as tokens_router
+from .mcp_auth import protected_resource_metadata
+from .mcp_server import build_mcp
 from .oidc import OIDCClient
 from .remote import RemoteHub
 from .remote import router as remote_router
-from .security import RateLimiter, Signer, require_auth, security_headers, session_key
+from .security import (
+    RateLimiter,
+    Signer,
+    is_api_path,
+    require_auth,
+    security_headers,
+    session_key,
+)
 from .sync import SyncService, next_auto_delay
+from .tokens import TokenStore
 from .web import pwa_app
 
 log = logging.getLogger("anki_studio")
@@ -103,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             endpoint=settings.anki_sync_endpoint,
             backup_dir=settings.backup_dir,
             io_timeout_secs=settings.anki_sync_io_timeout,
+            after_write_seconds=settings.anki_sync_after_write_seconds,
         )
         app.state.manager = manager
         app.state.sync = service
@@ -115,13 +128,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.anki_sync_on_startup or settings.anki_auto_sync_minutes > 0:
             # in background: l'API risponde subito anche se AnkiWeb è lento o irraggiungibile
             task = asyncio.create_task(_background_sync(app, settings))
+        # il lifespan di un'app montata non gira mai: il session manager dell'SDK MCP lo fa
+        # partire questo (senza, la prima richiesta a /mcp fallisce con "Task group is not
+        # initialized"). Si chiude per primo: nessuna chiamata MCP resta aperta sulla collezione
+        # mentre la chiudiamo.
+        mcp_stack = AsyncExitStack()
+        mcp_app = getattr(app.state, "mcp", None)
+        if mcp_app is not None:
+            await mcp_stack.enter_async_context(mcp_app.session_manager.run())
         try:
             yield
         finally:
+            await mcp_stack.aclose()
             if task:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            service.cancel_pending()
             # una sync partita prima dello spegnimento continua nel suo thread: la aspettiamo
             idle = await run_in_threadpool(service.wait_idle, _SHUTDOWN_WAIT_S)
             if not idle:
@@ -153,12 +176,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.token_limiter = RateLimiter(
         settings.anki_token_max_failures, settings.anki_token_window_s
     )
+    # i Bearer sbagliati hanno un limite a parte (vale solo per le richieste con un Bearer);
+    # `token_limiter` resta per i fallimenti del login OIDC
+    app.state.bearer_limiter = RateLimiter(
+        settings.anki_token_max_failures, settings.anki_token_window_s
+    )
     app.state.login_limiter = RateLimiter(
         settings.anki_login_max_failures, settings.anki_login_window_s
     )
     app.state.signer = Signer(session_key(settings))
     app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
     app.state.remote = RemoteHub()
+    app.state.tokens = TokenStore(settings.tokens_path)
+    app.state.journal = Journal(settings.journal_path)
+    if settings.anki_mcp_enabled:
+        app.state.mcp = build_mcp(app, settings)
+        if not settings.mcp_oauth_enabled:
+            log.info("OAuth di /mcp non configurato (ANKI_MCP_OIDC_*): solo token Bearer")
     if settings.anki_dev_login:
         log.warning("ANKI_DEV_LOGIN attivo: chiunque raggiunga l'API entra come \"dev\"")
 
@@ -183,7 +217,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path = request.url.path
         # health e file statici riuscito sono rumore: in DEBUG
         quiet = path == "/api/health" or (
-            not path.startswith("/api/") and response.status_code in (200, 304)
+            not is_api_path(path) and response.status_code in (200, 304)
         )
         level = logging.DEBUG if quiet else logging.INFO
         # solo il path: niente query string né header (dove viaggiano i token)
@@ -241,8 +275,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     protected = [Depends(require_auth)]
-    for r in (decks.router, study.router, notes.router, browse.router, sync.router, media.router):
+    routers = (
+        decks.router,
+        study.router,
+        notes.router,
+        browse.router,
+        sync.router,
+        media.router,
+        hub.router,
+        tokens_router.router,
+    )
+    for r in routers:
         app.include_router(r, prefix="/api", dependencies=protected)
+    mcp_app = getattr(app.state, "mcp", None)
+    if mcp_app is not None:
+        # /mcp si autentica da sé (token Bearer o JWT di Authentik, app/mcp_auth.py): niente
+        # cookie di sessione e niente CSRF. Due rotte esplicite, con e senza slash finale:
+        # un Mount risponderebbe con un redirect 307, che Claude non segue
+        for path in ("/mcp", "/mcp/"):
+            app.router.routes.append(Route(path, mcp_app.asgi))
+        if settings.mcp_oauth_enabled:
+            _add_oauth_metadata(app, settings)
     # login, callback e logout gestiscono da sé l'accesso; il WebSocket del telecomando
     # anche (require_auth vuole una Request HTTP): app/security.websocket_session
     app.include_router(auth.router, prefix="/api")
@@ -252,6 +305,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # quando nessuna rotta corrisponde, e un metodo sbagliato su una rotta API resta 405.
         app.router.default = web
     return app
+
+
+def _add_oauth_metadata(app: FastAPI, settings: Settings) -> None:
+    """RFC 9728: da qui Claude scopre l'authorization server. Pubblico, senza accesso. Due
+    percorsi: quello con il suffisso `/mcp` è quello che cerca Claude per la risorsa
+    `<url>/mcp`, quello senza è il fallback di alcuni client."""
+    headers = {
+        # sono dati pubblici e un client in un browser (es. MCP Inspector) può chiederli
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Cache-Control": "public, max-age=300",
+    }
+
+    def metadata():
+        return JSONResponse(protected_resource_metadata(settings), headers=headers)
+
+    for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+        app.add_api_route(path, metadata, methods=["GET"], include_in_schema=False)
 
 
 # avvio: uvicorn app.main:create_app --factory

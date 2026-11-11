@@ -7,11 +7,18 @@
  * dopo il login su Authentik (app/auth.tsx). Un 401 vuol dire sessione scaduta.
  */
 import type {
+  ApiToken,
+  ApiTokenCreated,
   AuthLogout,
   AuthUser,
+  CardPreview,
   DeckNode,
   DeckOptions,
+  MediaUpload,
+  MediaUploadResult,
   NoteSearchResult,
+  OperationList,
+  NoteTagsResult,
   Stats,
   Note,
   Notetype,
@@ -20,7 +27,9 @@ import type {
   SyncResult,
   SyncStatus,
   TodayStats,
+  TokenScope,
   TypedAnswer,
+  UndoOut,
 } from './types';
 
 export class ApiError extends Error {
@@ -53,6 +62,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     try {
       const data = (await res.json()) as { detail?: unknown };
       if (typeof data.detail === 'string') detail = data.detail;
+      // validazione di FastAPI (422): `detail` è un elenco di {msg, loc}
+      else if (Array.isArray(data.detail)) {
+        const msgs = data.detail.map((d: unknown) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : '')).filter(Boolean);
+        if (msgs.length > 0) detail = msgs.join('; ');
+      }
     } catch {
       // risposta non JSON
     }
@@ -117,4 +131,27 @@ export const api = {
   syncLogout: () => request<void>('POST', '/sync/logout'),
   sync: () => request<SyncResult>('POST', '/sync'),
   fullSync: (direction: 'upload' | 'download') => request<SyncResult>('POST', '/sync/full', { direction }),
+
+  /* ---- hub: libreria, token, diario delle operazioni degli agenti (docs/PIANO-HUB.md) ---- */
+  /** Diario delle operazioni degli agenti, dalla più recente. */
+  operations: (limit = 50) => request<OperationList>('GET', `/hub/operations?${new URLSearchParams({ limit: String(limit) })}`),
+  /** Annulla un'operazione: cancella le note create, ripristina quelle modificate, salta quelle toccate nel frattempo. 409 se già annullata. */
+  undoOperation: (id: string) => request<UndoOut>('POST', `/hub/operations/${encodeURIComponent(id)}/undo`),
+  cardPreview: (cardId: number) => request<CardPreview>('GET', `/cards/${cardId}/preview`),
+  moveNote: (id: number, deckId: number) => request<Note>('POST', `/notes/${id}/move`, { deck_id: deckId }),
+  /** Cancella la nota con le sue carte. Solo dalla sessione della PWA; chiedi sempre conferma. */
+  deleteNote: (id: number) => request<void>('DELETE', `/notes/${id}`),
+  editNoteTags: (noteIds: number[], change: { add?: string[]; remove?: string[] }) =>
+    request<NoteTagsResult>('POST', '/notes/tags', { note_ids: noteIds, add: change.add ?? [], remove: change.remove ?? [] }),
+
+  /** Carica un'immagine, un audio o un video breve nei media della collezione (base64, max 10 MB). */
+  uploadMedia: (file: MediaUpload) => request<MediaUploadResult>('POST', '/media', file),
+
+  /** Token per gli agenti (solo dalla sessione). Il token in chiaro si vede alla creazione e basta. */
+  tokens: () => request<ApiToken[]>('GET', '/tokens'),
+  createToken: (input: { name: string; scope?: TokenScope }) =>
+    request<ApiTokenCreated>('POST', '/tokens', input),
+  updateToken: (id: string, patch: { scope?: TokenScope }) =>
+    request<ApiToken>('PATCH', `/tokens/${id}`, patch),
+  deleteToken: (id: string) => request<void>('DELETE', `/tokens/${id}`),
 };

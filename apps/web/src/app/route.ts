@@ -14,7 +14,8 @@ export type Route =
   | { name: 'study'; deckId: number }
   | { name: 'add'; deckId: number | null }
   | { name: 'settings' }
-  | { name: 'remote' };
+  | { name: 'remote' }
+  | { name: 'library' };
 
 export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
@@ -27,6 +28,7 @@ export function parseRoute(hash: string): Route {
   }
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'remote') return { name: 'remote' };
+  if (parts[0] === 'library') return { name: 'library' };
   return { name: 'decks' };
 }
 
@@ -40,6 +42,8 @@ export function routeToHash(route: Route): string {
       return '#/settings';
     case 'remote':
       return '#/remote';
+    case 'library':
+      return '#/library';
     default:
       return '#/';
   }

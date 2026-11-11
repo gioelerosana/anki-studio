@@ -1,12 +1,20 @@
 # Routing di Anki Studio (file provider di Traefik), da copiare in
-# /home/ubuntu/stack/traefik/config/services/anki-studio.yml.
-# Dopo: docker compose down traefik && docker compose up -d traefik
+# /home/ubuntu/stack/traefik/config/anki-studio.yml (la cartella è piatta: il file provider
+# non guarda le sottocartelle). Ogni modifica si applica a caldo, senza riavviare Traefik.
 #
 # Niente forward-auth di Authentik: la PWA installata su iPad e le sue chiamate /api
 # non seguirebbero il redirect di login (come per Hermes Desktop). L'integrazione con
 # Authentik è OIDC nell'app (auth/blueprints/anki-studio-oidc.yaml): il backend fa il
 # login e tiene la sessione in un cookie HttpOnly; senza sessione /api/* risponde 401.
 # Pubblici restano solo la shell statica della PWA (nessun dato) e /api/health.
+#
+# Server MCP (/mcp) e discovery OAuth (/.well-known/oauth-protected-resource): stesso host,
+# stesso backend, ANCORA niente forward-auth né redirect di login. L'app Claude deve
+# ricevere da /mcp un `401` con `WWW-Authenticate: Bearer resource_metadata="…"` (è il
+# backend a rispondere, valida il Bearer `ask_…` o il JWT di Authentik): un redirect a una
+# pagina di login o un 200 HTML spezzerebbero il flusso. Nessun WAF, filtro geografico o
+# ipAllowList in mezzo: le richieste di Claude arrivano da Anthropic (160.79.104.0/21), non
+# dal dispositivo dell'utente, quindi un filtro per IP o paese le bloccherebbe.
 http:
   routers:
     anki-studio-router:
@@ -36,6 +44,30 @@ http:
         - loginRateLimit@file
         - securityHeaders@file
         - compress@file
+      tls:
+        certResolver: cloudflare
+        domains:
+          - main: "jshep.xyz"
+            sans:
+              - "*.jshep.xyz"
+
+    # /mcp e discovery: router dedicato per tenerli fuori da `compress` (le risposte SSE dello
+    # streamable HTTP non devono essere ricompresse né trattenute dal proxy; `compress@file`
+    # esclude già text/event-stream, qui si evita il rischio del tutto) e perché il percorso è
+    # chiaro nei log. Niente rate limit di Traefik: gli IP di Claude sono pochi e condivisi da
+    # tutti gli utenti Anthropic, un limite per IP sorgente colpirebbe anche te; i tentativi
+    # sbagliati li limita il backend (RateLimiter sui token e sul login).
+    # Traefik svuota subito i buffer delle risposte text/event-stream; writeTimeout 0 e
+    # idleTimeout 360 s dell'entrypoint (traefik.yml) bastano: uno stream SSE fermo per
+    # più di 6 minuti viene chiuso, e Claude lo riapre da sé.
+    anki-studio-mcp-router:
+      rule: "Host(`anki.jshep.xyz`) && (Path(`/mcp`) || PathPrefix(`/mcp/`) || PathPrefix(`/.well-known/oauth-protected-resource`))"
+      priority: 60
+      entryPoints:
+        - websecure
+      service: anki-studio-service
+      middlewares:
+        - securityHeaders@file
       tls:
         certResolver: cloudflare
         domains:

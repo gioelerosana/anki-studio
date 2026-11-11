@@ -150,6 +150,9 @@ class NoteOut(BaseModel):
     fields: dict[str, str]
     tags: list[str]
     card_ids: list[int]
+    # solo nella risposta di `PATCH /notes/{id}` (e di `update_note` via MCP) quando la modifica ha
+    # cambiato davvero qualcosa: l'id dell'operazione nel diario, da dare a `undo`. Altrove è null.
+    operation_id: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -303,3 +306,176 @@ class AuthUser(BaseModel):
 class AuthLogout(BaseModel):
     # end-session di Authentik: la PWA ci naviga per chiudere anche quella sessione
     logout_url: str | None = None
+
+
+# ---- hub: creazione da agenti, libreria, diario e annullamento, token (docs/PIANO-HUB.md) --------
+#
+# Contratto condiviso tra REST (app/routers/hub.py), server MCP (app/mcp_server.py) e PWA.
+# Se cambi qualcosa qui, aggiorna apps/web/src/api/types.ts.
+
+
+class HubNoteIn(BaseModel):
+    # nome completo ("Lingue::Spagnolo") o id numerico
+    deck: str | int
+    # nome del tipo di nota ("Basic", "Cloze") o id numerico
+    notetype: str | int
+    fields: dict[str, str]
+    tags: list[str] = []
+    # id scelto dall'agente per rendere l'invio ripetibile: diventa il tag `ext::<id>`.
+    # Se esiste già una nota con quel tag viene aggiornata (o lasciata com'è) invece di duplicarla.
+    # Solo lettere, cifre e `. _ : -`: finisce in un tag di Anki e in una ricerca, e un carattere
+    # speciale (spazio, `*`, `\`, `"`) cambierebbe cosa trova.
+    external_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,200}$")
+
+
+class HubBatchIn(BaseModel):
+    notes: list[HubNoteIn] = Field(min_length=1, max_length=100)
+    # niente viene scritto: restituisce solo cosa succederebbe
+    dry_run: bool = False
+    # crea i mazzi che non esistono (altrimenti la nota è un errore)
+    create_missing_decks: bool = False
+
+
+class HubNoteResult(BaseModel):
+    index: int
+    # unchanged: external_id già presente con gli stessi campi; duplicate: stesso primo campo
+    # senza external_id (note_id punta a quella esistente)
+    status: Literal["created", "updated", "unchanged", "duplicate", "error"]
+    note_id: int | None = None
+    card_ids: list[int] = []
+    error: str | None = None
+
+
+class HubBatchOut(BaseModel):
+    dry_run: bool
+    created: int
+    updated: int
+    unchanged: int
+    duplicates: int
+    errors: int
+    results: list[HubNoteResult]
+    # l'operazione nel diario (`GET /hub/operations`), da dare a `undo`; null se non è stato
+    # scritto niente (dry_run, tutto unchanged/duplicate/error)
+    operation_id: str | None = None
+
+
+class HubDeckIn(BaseModel):
+    # nome completo, es. "Lingue::Spagnolo::Verbi"
+    name: str = Field(min_length=1, max_length=500)
+
+
+class HubDeckOut(BaseModel):
+    id: int
+    name: str
+    # False se esisteva già (la rotta è idempotente)
+    created: bool
+    # se il mazzo è stato creato: l'operazione nel diario, da dare a `undo`
+    operation_id: str | None = None
+
+
+OperationKind = Literal["add_notes", "update_note", "create_deck"]
+
+
+class OperationOut(BaseModel):
+    """Una voce del diario delle operazioni degli agenti (`app/journal.py`)."""
+
+    id: str
+    # secondi epoch
+    created_at: int
+    # slug del token che l'ha fatta ("claude"), oppure "sessione" / "admin"
+    agent: str
+    kind: OperationKind
+    summary: str
+    # note create o aggiornate dall'operazione
+    note_count: int
+    # applied: niente annullato; partial: annullata in parte (si può ritentare); undone: tutta
+    status: Literal["applied", "partial", "undone"]
+    undone_at: int | None = None
+
+
+class OperationList(BaseModel):
+    # dalla più recente
+    operations: list[OperationOut]
+
+
+class UndoSkip(BaseModel):
+    # null per un elemento che non è una nota (un mazzo)
+    note_id: int | None = None
+    reason: str
+
+
+class UndoOut(BaseModel):
+    operation_id: str
+    status: Literal["undone", "partial"]
+    # note riportate a come erano prima
+    restored: int
+    # note create e cancellate, più i mazzi eliminati
+    deleted: int
+    skipped: list[UndoSkip] = []
+
+
+class NoteMoveIn(BaseModel):
+    deck_id: int
+
+
+class NoteTagsIn(BaseModel):
+    note_ids: list[int] = Field(min_length=1, max_length=500)
+    add: list[str] = []
+    remove: list[str] = []
+
+
+class NoteTagsOut(BaseModel):
+    updated: int
+
+
+class CardPreview(BaseModel):
+    """Una carta mostrata fuori dallo studio (libreria): come StudyCard, senza
+    pulsanti e senza coda, quindi vale anche per le carte sospese."""
+
+    card_id: int
+    note_id: int
+    deck_id: int
+    deck_name: str
+    question_html: str
+    answer_html: str
+    css: str
+    card_class: str
+    question_av: list[AvItem]
+    answer_av: list[AvItem]
+    flag: int
+    suspended: bool
+
+
+class TokenIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    # read: solo letture; write: legge e crea/modifica note (mai cancella, mai sync completa)
+    scope: Literal["read", "write"] = "write"
+
+
+class TokenUpdate(BaseModel):
+    scope: Literal["read", "write"] | None = None
+
+
+class TokenOut(BaseModel):
+    id: str
+    name: str
+    scope: Literal["read", "write"]
+    # secondi epoch
+    created_at: int
+    last_used_at: int | None = None
+
+
+class TokenCreated(TokenOut):
+    # il token in chiaro, mostrato UNA volta sola: sul server resta solo l'hash
+    token: str
+
+
+class MediaIn(BaseModel):
+    # nome desiderato (Anki può cambiarlo se esiste già un file diverso con lo stesso nome)
+    filename: str = Field(min_length=1, max_length=200)
+    data_base64: str
+
+
+class MediaOut(BaseModel):
+    # nome da usare nei campi: `<img src="…">` o `[sound:…]`
+    filename: str

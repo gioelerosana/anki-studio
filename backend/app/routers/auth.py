@@ -21,6 +21,7 @@ from ..schemas import AuthLogout, AuthUser
 from ..security import (
     LOGIN_COOKIE,
     SESSION_COOKIE,
+    Identity,
     Signer,
     check_blocked,
     cookie_secure,
@@ -181,9 +182,9 @@ def callback(
 
 
 @router.get("/me", response_model=AuthUser)
-def me(user: dict = Depends(require_auth)):
+def me(user: Identity = Depends(require_auth)):
     """Chi è collegato. 401 = nessuna sessione: la PWA va su /api/auth/login."""
-    return AuthUser(name=str(user.get("name") or ""), username=user.get("username"))
+    return AuthUser(name=user.name, username=user.username)
 
 
 @router.post("/logout", response_model=AuthLogout)

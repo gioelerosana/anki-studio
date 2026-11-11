@@ -13,11 +13,70 @@ const MEDIA_PREFIX = '/api/media/';
 
 /** Elementi tolti con tutto il contenuto. */
 const DROP = new Set(['script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'base', 'meta', 'link', 'noscript']);
-/** Attributi che contengono un URL: niente `javascript:` né documenti HTML in `data:`. */
-const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'background', 'srcset']);
-const BAD_URL = /^\s*(?:javascript|vbscript|data:text\/html)/i;
+/** Attributi che contengono un URL: passano da `isSafeUrl`. */
+const URL_ATTRS = new Set([
+  'href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'background', 'srcset', 'ping', 'cite', 'longdesc', 'manifest', 'codebase',
+]);
+/** Gli unici schemi che una carta può usare; tutto il resto (javascript:, vbscript:, data:text/html, file:…) cade. */
+const SAFE_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+/** Le immagini incorporate sono raster: un `data:image/svg+xml` o `data:text/html` non passa. */
+const SAFE_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp)[;,]/i;
 const PLAY_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>';
+
+/*
+ * Perché un parsing vero e non una regex sullo schema: i browser ignorano spazi e caratteri di
+ * controllo iniziali e tolgono tab e a capo ovunque nell'URL, quindi `java\nscript:`,
+ * `\u0001javascript:` o `JaVaScRiPt:` sono tutti `javascript:`. Si ripulisce come fa il browser
+ * (anche di più: via ogni controllo e carattere invisibile) e poi si lascia decidere a `URL`,
+ * che dà lo schema effettivo; un URL relativo prende lo schema della base e passa.
+ */
+let inertDoc: Document | null = null;
+function decodeEntities(value: string): string {
+  if (!value.includes('&')) return value;
+  // Documento inerte: niente immagini caricate né gestori che partono. La textarea è RCDATA,
+  // quindi dentro non nascono elementi: si leggono solo le entità decodificate.
+  inertDoc ??= document.implementation.createHTMLDocument('');
+  const box = inertDoc.createElement('textarea');
+  box.innerHTML = value;
+  return box.value;
+}
+
+// eslint-disable-next-line no-control-regex
+const INVISIBLE = /[\u0000-\u0020\u007f-\u00a0\u00ad\u1680\u180e\u2000-\u200f\u2028-\u202f\u205f-\u2064\u3000\ufeff]/g;
+
+function schemeIsSafe(value: string, allowDataImage: boolean): boolean {
+  const cleaned = value.replace(INVISIBLE, '');
+  if (cleaned === '') return true;
+  if (SAFE_DATA_IMAGE.test(cleaned)) return allowDataImage;
+  try {
+    return SAFE_SCHEMES.has(new URL(cleaned, 'https://base.invalid/').protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `true` se l'URL è http(s), mailto, tel o relativo (`/api/media/…`, `#ancora`, `foto.png`).
+ * Si controlla sia il valore così com'è sia quello con le entità HTML decodificate
+ * (`java&#10;script:`), perché quale dei due arrivi al browser dipende da chi lo legge.
+ */
+export function isSafeUrl(value: string, allowDataImage = false): boolean {
+  return schemeIsSafe(value, allowDataImage) && schemeIsSafe(decodeEntities(value), allowDataImage);
+}
+
+/** `srcset` è un elenco «url descrittore, url descrittore»: ogni URL deve passare. */
+function isSafeSrcset(value: string): boolean {
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim().split(/\s+/)[0] ?? '')
+    .every((url) => isSafeUrl(url));
+}
+
+function attrUrlIsSafe(tag: string, name: string, value: string): boolean {
+  if (name === 'srcset') return isSafeSrcset(value);
+  return isSafeUrl(value, name === 'src' && tag === 'img');
+}
 
 /** `url(foto.png)` relativi nel CSS puntano ai media della collezione, come fa Anki. */
 export function rewriteCssUrls(css: string): string {
@@ -53,10 +112,11 @@ export function sanitizeCardHtml(html: string): DocumentFragment {
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) el.removeAttribute(attr.name);
-      else if (URL_ATTRS.has(name) && BAD_URL.test(attr.value)) el.removeAttribute(attr.name);
+      else if (URL_ATTRS.has(name) && !attrUrlIsSafe(tag, name, attr.value)) el.removeAttribute(attr.name);
       else if (name === 'style') el.setAttribute('style', rewriteCssUrls(attr.value));
     }
-    if (tag === 'a' && el.hasAttribute('href')) {
+    // Link esterni: si aprono in un'altra scheda e senza `window.opener` né referrer.
+    if ((tag === 'a' || tag === 'area') && (el.hasAttribute('href') || el.hasAttribute('xlink:href'))) {
       el.setAttribute('target', '_blank');
       el.setAttribute('rel', 'noopener noreferrer');
     }

@@ -202,16 +202,31 @@ class OIDCClient:
             raise OIDCError("failed", "sub mancante")
 
     def _authorize(self, claims: dict) -> None:
-        if not self.allowed_users and not self.allowed_groups:
-            return
-        names = {
-            str(claims[k]).lower() for k in ("preferred_username", "email") if claims.get(k)
-        }
-        groups = claims.get("groups")
-        groups = {str(g) for g in groups} if isinstance(groups, list) else set()
-        if names & self.allowed_users or groups & self.allowed_groups:
-            return
-        raise OIDCError("forbidden", f"utente {claims.get('preferred_username')!r} non ammesso")
+        authorize_claims(claims, self.allowed_users, self.allowed_groups)
+
+
+def authorize_claims(claims: dict, allowed_users: set[str], allowed_groups: set[str]) -> None:
+    """Seconda barriera dopo le policy di Authentik (`ANKI_OIDC_ALLOWED_USERS/_GROUPS`): la usano
+    sia il login della PWA sia l'OAuth di /mcp, così la regola è una sola.
+
+    Liste vuote = decide Authentik. Altrimenti serve almeno un utente (`preferred_username`
+    o email, senza badare alle maiuscole) o un gruppo ammesso; se il token non porta nessuno
+    di questi claim l'errore lo dice nel dettaglio, invece di un generico "non ammesso":
+    di solito vuol dire che manca lo scope `profile`/`email` o la mappatura dei gruppi."""
+    if not allowed_users and not allowed_groups:
+        return
+    names = {str(claims[k]).lower() for k in ("preferred_username", "email") if claims.get(k)}
+    groups = claims.get("groups")
+    groups = {str(g) for g in groups} if isinstance(groups, list) else set()
+    if names & allowed_users or groups & allowed_groups:
+        return
+    if not names and not groups:
+        raise OIDCError(
+            "forbidden",
+            "nel token mancano preferred_username, email e groups: servono per applicare "
+            "ANKI_OIDC_ALLOWED_USERS/_GROUPS (scope profile/email e mappatura dei gruppi sul provider)",
+        )
+    raise OIDCError("forbidden", f"utente {claims.get('preferred_username')!r} non ammesso")
 
 
 def _local(url: object) -> bool:

@@ -12,14 +12,69 @@ import { TeX } from 'mathjax-full/js/input/tex.js';
 import { SVG } from 'mathjax-full/js/output/svg.js';
 import { liteAdaptor } from 'mathjax-full/js/adaptors/liteAdaptor.js';
 import { RegisterHTMLHandler } from 'mathjax-full/js/handlers/html.js';
-import { AllPackages } from 'mathjax-full/js/input/tex/AllPackages.js';
+// Pacchetti uno per uno, non `AllPackages`: i testi delle carte ora li scrivono anche gli agenti
+// e `html` (`\href`, `\class`, `\style`, `\cssId`), `action`, `bbox`, `setoptions` e `unicode`
+// darebbero a una formula link, stili e attributi arbitrari. Qui restano quelli che servono
+// a scrivere matematica e chimica; le macro e le formule non valide non producono link.
+import 'mathjax-full/js/input/tex/base/BaseConfiguration.js';
+import 'mathjax-full/js/input/tex/ams/AmsConfiguration.js';
+import 'mathjax-full/js/input/tex/amscd/AmsCdConfiguration.js';
+import 'mathjax-full/js/input/tex/boldsymbol/BoldsymbolConfiguration.js';
+import 'mathjax-full/js/input/tex/braket/BraketConfiguration.js';
+import 'mathjax-full/js/input/tex/cancel/CancelConfiguration.js';
+import 'mathjax-full/js/input/tex/cases/CasesConfiguration.js';
+import 'mathjax-full/js/input/tex/centernot/CenternotConfiguration.js';
+import 'mathjax-full/js/input/tex/color/ColorConfiguration.js';
+import 'mathjax-full/js/input/tex/enclose/EncloseConfiguration.js';
+import 'mathjax-full/js/input/tex/extpfeil/ExtpfeilConfiguration.js';
+import 'mathjax-full/js/input/tex/gensymb/GensymbConfiguration.js';
+import 'mathjax-full/js/input/tex/mathtools/MathtoolsConfiguration.js';
+import 'mathjax-full/js/input/tex/mhchem/MhchemConfiguration.js';
+import 'mathjax-full/js/input/tex/newcommand/NewcommandConfiguration.js';
+import 'mathjax-full/js/input/tex/noerrors/NoErrorsConfiguration.js';
+import 'mathjax-full/js/input/tex/noundefined/NoUndefinedConfiguration.js';
+import 'mathjax-full/js/input/tex/physics/PhysicsConfiguration.js';
+import 'mathjax-full/js/input/tex/textcomp/TextcompConfiguration.js';
+import 'mathjax-full/js/input/tex/upgreek/UpgreekConfiguration.js';
+import 'mathjax-full/js/input/tex/verb/VerbConfiguration.js';
+
+const PACKAGES = [
+  'base', 'ams', 'amscd', 'boldsymbol', 'braket', 'cancel', 'cases', 'centernot', 'color', 'enclose',
+  'extpfeil', 'gensymb', 'mathtools', 'mhchem', 'newcommand', 'noerrors', 'noundefined', 'physics',
+  'textcomp', 'upgreek', 'verb',
+];
 
 const adaptor = liteAdaptor();
 RegisterHTMLHandler(adaptor);
 const doc = mathjax.document('', {
-  InputJax: new TeX({ packages: AllPackages }),
+  InputJax: new TeX({ packages: PACKAGES }),
   OutputJax: new SVG({ fontCache: 'local' }),
 });
+
+/**
+ * L'SVG di MathJax è l'unica cosa che entra nella carta senza passare da `sanitizeCardHtml`,
+ * e `\mmlToken{mi}[href=…]` (o `\csname mmlToken\endcsname`) può ancora farsi un link: qui si
+ * tolgono link, HTML incorporato, gestori ed ogni stile che non sia una misura di MathJax.
+ */
+const SAFE_STYLE = /^(?:vertical-align|min-width|width|height|margin-left|margin-right|margin-top|margin-bottom)\s*:\s*-?[\d.]+(?:ex|em|px|%)?$/i;
+
+export function cleanMathSvg(root: ParentNode): void {
+  root.querySelectorAll('script, foreignObject, style, iframe, object, embed').forEach((el) => el.remove());
+  root.querySelectorAll('a').forEach((el) => el.replaceWith(...Array.from(el.childNodes)));
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on')) el.removeAttribute(attr.name);
+      // i glifi sono `<use href="#MJX-…">`: solo frammenti della pagina stessa
+      else if ((name === 'href' || name === 'xlink:href') && !attr.value.startsWith('#')) el.removeAttribute(attr.name);
+      else if (name === 'style') {
+        const kept = attr.value.split(';').map((d) => d.trim()).filter((d) => d && SAFE_STYLE.test(d));
+        if (kept.length > 0) el.setAttribute('style', kept.join('; '));
+        else el.removeAttribute('style');
+      }
+    }
+  }
+}
 
 const MATH = /\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
 const cache = new Map<string, string>();
@@ -61,6 +116,7 @@ export function typesetMath(root: Element): void {
       if (svg) {
         const template = document.createElement('template');
         template.innerHTML = svg;
+        cleanMathSvg(template.content);
         frag.append(template.content);
       } else {
         // Formula non valida: si lascia il sorgente, come fa Anki.

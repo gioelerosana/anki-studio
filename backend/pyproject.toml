@@ -10,6 +10,14 @@ dependencies = [
     "starlette>=1.10",
     "uvicorn[standard]>=0.30",
     "pydantic-settings>=2.4",
+    # server MCP su /mcp (app/mcp_server.py). La 2.x è la linea stabile (Production/Stable
+    # dalla 2.0, Python >= 3.10): rinomina FastMCP in MCPServer e vuole il session manager
+    # nel lifespan dell'app che la ospita. Tetto alla 3: il prossimo salto maggiore si prova
+    # prima, non si prende con un `pip install -U`.
+    "mcp>=2.3,<3",
+    # verifica della firma dei JWT di Authentik per l'OAuth di /mcp (app/mcp_auth.py).
+    # Già richiesta da mcp, ma la usiamo direttamente: la dichiariamo noi.
+    "PyJWT[crypto]>=2.10.1,<3",
 ]
 
 [project.optional-dependencies]

@@ -132,6 +132,7 @@ e il suo «ok» sblocca i passi 3–6.
 - [x] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
 - [x] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
 - [x] Telecomando: il telefono sceglie il mazzo e comanda lo studio aperto sul computer (`#/remote`, WebSocket `/api/remote`)
+- [x] Hub delle flashcard: Libreria, attività recenti degli agenti con annullamento e gestione token (piano in [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md))
 - [ ] Telecomando provato su iPhone + computer veri (Wake Lock, riconnessione dopo lo standby)
 - [ ] Test su iPad reale come PWA installata (offline della shell, safe area, tastiera)
 - [ ] Risposta scritta `{{type:…}}` e altre richieste al backend in [`docs/REQUESTS-WEB-TO-API.md`](docs/REQUESTS-WEB-TO-API.md)
@@ -145,6 +146,7 @@ e il suo «ok» sblocca i passi 3–6.
 - [x] Sicurezza: rate limit su token e login, header di sicurezza, log senza segreti, proxy headers
 - [x] Login OIDC con Authentik (Authorization Code + PKCE, sessione in cookie HttpOnly, CSRF)
 - [x] Healthcheck significativo, logging strutturato, backup automatici e del volume dati
+- [x] Hub per gli agenti: API di creazione in blocco (le note entrano subito, niente bozze) e token con scope, diario delle operazioni con annullamento (`/api/hub/operations`, tool MCP `list_operations`/`undo_operation`), server MCP su `/mcp` (Bearer e OAuth Authentik), media — [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md)
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
 - [ ] Modifica delle opzioni del mazzo dalla PWA (oggi sola lettura)
@@ -154,6 +156,7 @@ e il suo «ok» sblocca i passi 3–6.
 - [x] CI su GitHub Actions e pubblicazione su GHCR ai tag `vX.Y.Z`
 - [x] Proposta per lo stack (`deploy/stack/`) con script di auto-update controllato
 - [x] Repository GitHub, primo tag (`v26.0.1`, numerazione `vAA.V.M`) e package GHCR pubblico — README, "Pubblicazione"
+- [ ] Applicare nello stack il secondo provider Authentik (`deploy/stack/auth/blueprints/anki-studio-mcp.yaml`) e la route di `/mcp`, poi provare Claude e Hermes veri (`docs/PIANO-HUB.md`, fase 6)
 - [ ] Integrazione nello stack e migrazione dei dati dal deploy di prova (`deploy/stack/README.md`)
 - [ ] Blueprint Authentik applicato (`deploy/stack/auth/blueprints/anki-studio-oidc.yaml`) e login
       provato sulla PWA installata su iPad

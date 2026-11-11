@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Plus, Settings } from 'lucide-react';
+import { Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Library, Plus, Settings } from 'lucide-react';
 import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
@@ -49,9 +49,15 @@ export function DecksScreen() {
       <HeaderBar
         title="Mazzi"
         leftContent={
-          <IconButton label="Impostazioni" onClick={() => navigate({ name: 'settings' })}>
-            <Settings />
-          </IconButton>
+          <>
+            <IconButton label="Impostazioni" onClick={() => navigate({ name: 'settings' })}>
+              <Settings />
+            </IconButton>
+            {/* Libreria (docs/PIANO-HUB.md): cerca e sistema le note, anche quelle create dagli agenti. */}
+            <IconButton label="Libreria" onClick={() => navigate({ name: 'library' })}>
+              <Library />
+            </IconButton>
+          </>
         }
         rightContent={
           <>
