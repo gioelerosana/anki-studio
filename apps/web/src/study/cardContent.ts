@@ -209,6 +209,14 @@ export const BASE_CARD_CSS = `
 img, video { max-width: 100%; height: auto; }
 img { max-height: 70vh; object-fit: contain; }
 mjx-container { display: inline-block; }
+/* Formule in linea troppo larghe (capita su telefono): scorrono da sole invece di essere tagliate.
+   Con overflow l'inline-block si allinea con il bordo inferiore, quindi la discesa della formula
+   la porta sul contenitore \`typesetMath\` (math.ts) e qui l'SVG diventa un blocco senza interlinea. */
+mjx-container:not([display="true"]) {
+  max-width: 100%; overflow-x: auto; overflow-y: hidden; line-height: 0;
+  -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: thin;
+}
+mjx-container:not([display="true"]) > svg { display: block; }
 mjx-container[display="true"] { display: block; margin: 0.6em 0; text-align: center; overflow-x: auto; overflow-y: hidden; }
 mjx-container svg { overflow: visible; vertical-align: middle; }
 hr#answer { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }

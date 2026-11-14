@@ -76,6 +76,24 @@ export function cleanMathSvg(root: ParentNode): void {
   }
 }
 
+/**
+ * Le formule in linea scorrono se sono troppo larghe (`overflow-x: auto` in BASE_CARD_CSS), ma un
+ * inline-block con overflow si appoggia alla riga con il bordo inferiore e non con la linea di base
+ * della formula: lo spostamento verticale dell'SVG (la sua discesa) passa al contenitore, così
+ * `b*c` resta allineata al testo come prima.
+ */
+function moveBaseline(root: ParentNode): void {
+  root.querySelectorAll('mjx-container').forEach((container) => {
+    const svg = container.querySelector(':scope > svg');
+    if (!(svg instanceof SVGElement) || !(container instanceof HTMLElement)) return;
+    const align = svg.style.verticalAlign;
+    if (align) {
+      container.style.verticalAlign = align;
+      svg.style.removeProperty('vertical-align');
+    }
+  });
+}
+
 const MATH = /\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
 const cache = new Map<string, string>();
 
@@ -117,6 +135,7 @@ export function typesetMath(root: Element): void {
         const template = document.createElement('template');
         template.innerHTML = svg;
         cleanMathSvg(template.content);
+        if (!display) moveBaseline(template.content);
         frag.append(template.content);
       } else {
         // Formula non valida: si lascia il sorgente, come fa Anki.
