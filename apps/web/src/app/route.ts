@@ -13,9 +13,17 @@ export type Route =
   | { name: 'decks' }
   | { name: 'study'; deckId: number }
   | { name: 'add'; deckId: number | null }
-  | { name: 'settings' }
+  | { name: 'settings'; section?: SettingsSection; deckId?: number }
   | { name: 'remote' }
   | { name: 'library' };
+
+/** Sezioni delle impostazioni (#/settings/<sezione>); `decks` può aprire un mazzo (#/settings/decks/123). */
+export const SETTINGS_SECTIONS = ['decks', 'appearance', 'sync', 'agents', 'account', 'shortcuts', 'about'] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+function isSettingsSection(value: string | undefined): value is SettingsSection {
+  return (SETTINGS_SECTIONS as readonly string[]).includes(value ?? '');
+}
 
 export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
@@ -26,7 +34,11 @@ export function parseRoute(hash: string): Route {
     const deck = params.get('deck');
     return { name: 'add', deckId: deck && /^\d+$/.test(deck) ? Number(deck) : null };
   }
-  if (parts[0] === 'settings') return { name: 'settings' };
+  if (parts[0] === 'settings') {
+    if (!isSettingsSection(parts[1])) return { name: 'settings' };
+    const deck = parts[1] === 'decks' && /^\d+$/.test(parts[2] ?? '') ? Number(parts[2]) : undefined;
+    return deck ? { name: 'settings', section: 'decks', deckId: deck } : { name: 'settings', section: parts[1] };
+  }
   if (parts[0] === 'remote') return { name: 'remote' };
   if (parts[0] === 'library') return { name: 'library' };
   return { name: 'decks' };
@@ -39,7 +51,8 @@ export function routeToHash(route: Route): string {
     case 'add':
       return route.deckId ? `#/add?deck=${route.deckId}` : '#/add';
     case 'settings':
-      return '#/settings';
+      if (!route.section) return '#/settings';
+      return route.section === 'decks' && route.deckId ? `#/settings/decks/${route.deckId}` : `#/settings/${route.section}`;
     case 'remote':
       return '#/remote';
     case 'library':

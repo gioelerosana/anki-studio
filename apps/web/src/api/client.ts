@@ -14,6 +14,7 @@ import type {
   CardPreview,
   DeckNode,
   DeckOptions,
+  DeckOptionsInput,
   MediaUpload,
   MediaUploadResult,
   NoteSearchResult,
@@ -122,6 +123,9 @@ export const api = {
       `/stats?${new URLSearchParams({ days: String(days), ...(deckId !== undefined ? { deck_id: String(deckId) } : {}) })}`,
     ),
   deckOptions: (deckId: number) => request<DeckOptions>('GET', `/decks/${deckId}/options`),
+  /** Salva preset (condiviso con gli altri mazzi che lo usano), limiti del mazzo e opzioni della collezione. */
+  saveDeckOptions: (deckId: number, input: DeckOptionsInput) =>
+    request<DeckOptions>('PUT', `/decks/${deckId}/options`, input),
   /** "Studia altre N carte oggi" sul mazzo; risponde con la carta successiva. */
   extendLimits: (deckId: number, extra: { new?: number; review?: number }) =>
     request<StudyState>('POST', `/decks/${deckId}/extend-limits`, extra),

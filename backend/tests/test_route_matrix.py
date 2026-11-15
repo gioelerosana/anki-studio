@@ -43,6 +43,7 @@ MATRIX = {
     ("GET", "/api/media/{filename}"): ADMIN,
     ("GET", "/api/decks/{deck_id}/study"): ADMIN,
     ("GET", "/api/decks/{deck_id}/options"): ADMIN,
+    ("PUT", "/api/decks/{deck_id}/options"): ADMIN,
     ("POST", "/api/decks/{deck_id}/study/answer"): ADMIN,
     ("POST", "/api/decks/{deck_id}/study/undo"): ADMIN,
     ("POST", "/api/decks/{deck_id}/extend-limits"): ADMIN,

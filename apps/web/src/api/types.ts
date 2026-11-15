@@ -229,20 +229,64 @@ export interface Stats {
   generated_at: number;
 }
 
+export interface DeckPreset {
+  id: number;
+  name: string;
+  /** Quanti mazzi lo usano: con più di uno, cambiarlo cambia anche gli altri. */
+  use_count: number;
+  new_per_day: number;
+  reviews_per_day: number;
+  learn_steps_min: number[];
+  relearn_steps_min: number[];
+  max_answer_seconds: number;
+  bury_new_siblings: boolean;
+  bury_review_siblings: boolean;
+  desired_retention: number;
+}
+
+/** Limiti propri del mazzo («Questo mazzo» e «Solo oggi» di Anki); null = quello del preset. */
+export interface DeckLimits {
+  new: number | null;
+  review: number | null;
+  new_today: number | null;
+  review_today: number | null;
+}
+
 export interface DeckOptions {
   deck_id: number;
   deck_name: string;
   filtered: boolean;
   preset_id: number | null;
   preset_name: string | null;
+  presets: DeckPreset[];
   new_per_day: number | null;
   reviews_per_day: number | null;
+  deck_limits: DeckLimits;
   learn_steps_min: number[];
   relearn_steps_min: number[];
   max_answer_seconds: number | null;
   bury_new_siblings: boolean;
   bury_review_siblings: boolean;
+  /** Opzioni della collezione: valgono per tutti i mazzi. */
+  new_cards_ignore_review_limit: boolean;
+  apply_all_parent_limits: boolean;
   fsrs: boolean;
+  desired_retention: number | null;
+}
+
+/** PUT /api/decks/{id}/options (specchio di `DeckOptionsIn`). */
+export interface DeckOptionsInput {
+  preset_id: number;
+  new_per_day: number;
+  reviews_per_day: number;
+  deck_limits: Partial<DeckLimits>;
+  learn_steps_min: number[];
+  relearn_steps_min: number[];
+  max_answer_seconds: number;
+  bury_new_siblings: boolean;
+  bury_review_siblings: boolean;
+  new_cards_ignore_review_limit: boolean;
+  apply_all_parent_limits: boolean;
   desired_retention: number | null;
 }
 

@@ -1,7 +1,8 @@
 """Ricerca delle note, tag, statistiche e opzioni del mazzo.
 
 Tutto in sola lettura, tranne `extend-limits` (il "Studia altre N carte oggi" di
-Anki), che passa dallo scheduler come le altre operazioni.
+Anki), che passa dallo scheduler come le altre operazioni, e il salvataggio delle opzioni
+del mazzo, che passa da `update_deck_configs` come la schermata di Anki desktop.
 """
 
 from __future__ import annotations
@@ -11,21 +12,27 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from anki.collection import Collection
+from anki.deck_config_pb2 import UpdateDeckConfigsMode
+from anki.decks import UpdateDeckConfigs
 from anki.errors import SearchError
 
 from ..collection import CollectionManager
-from ..deps import get_manager
+from ..deps import get_manager, get_sync
 from ..schemas import (
     CardCounts,
     DayForecast,
     DayReviews,
+    DeckLimits,
     DeckOptions,
+    DeckOptionsIn,
+    DeckPreset,
     ExtendLimitsIn,
     NoteSearchItem,
     NoteSearchOut,
     StatsOut,
     StudyState,
 )
+from ..sync import SyncService
 from .study import _select_deck, _state
 
 router = APIRouter(tags=["browse"])
@@ -189,31 +196,134 @@ def stats(
 # ---- opzioni del mazzo ---------------------------------------------------------
 
 
+def _preset_out(preset, use_count: int) -> DeckPreset:
+    cfg = preset.config
+    return DeckPreset(
+        id=preset.id,
+        name=preset.name,
+        use_count=use_count,
+        new_per_day=cfg.new_per_day,
+        reviews_per_day=cfg.reviews_per_day,
+        learn_steps_min=[round(x, 4) for x in cfg.learn_steps],
+        relearn_steps_min=[round(x, 4) for x in cfg.relearn_steps],
+        max_answer_seconds=cfg.cap_answer_time_to_secs,
+        bury_new_siblings=cfg.bury_new,
+        bury_review_siblings=cfg.bury_reviews,
+        desired_retention=round(cfg.desired_retention, 4),
+    )
+
+
+def _options_out(col: Collection, deck_id: int, deck: dict) -> DeckOptions:
+    if deck.get("dyn"):
+        return DeckOptions(deck_id=deck_id, deck_name=deck["name"], filtered=True)
+    # La stessa vista della schermata delle opzioni di Anki desktop: preset, limiti del mazzo
+    # e opzioni della collezione arrivano insieme e si salvano insieme (update_deck_configs).
+    upd = col.decks.get_deck_configs_for_update(deck_id)
+    current = upd.current_deck
+    preset = next(c.config for c in upd.all_config if c.config.id == current.config_id)
+    cfg = preset.config
+    lim = current.limits
+    return DeckOptions(
+        deck_id=deck_id,
+        deck_name=deck["name"],
+        filtered=False,
+        preset_id=preset.id,
+        preset_name=preset.name,
+        presets=[_preset_out(c.config, c.use_count) for c in upd.all_config],
+        new_per_day=cfg.new_per_day,
+        reviews_per_day=cfg.reviews_per_day,
+        deck_limits=DeckLimits(
+            new=lim.new if lim.HasField("new") else None,
+            review=lim.review if lim.HasField("review") else None,
+            new_today=lim.new_today if lim.new_today_active and lim.HasField("new_today") else None,
+            review_today=(
+                lim.review_today if lim.review_today_active and lim.HasField("review_today") else None
+            ),
+        ),
+        learn_steps_min=[round(x, 4) for x in cfg.learn_steps],
+        relearn_steps_min=[round(x, 4) for x in cfg.relearn_steps],
+        max_answer_seconds=cfg.cap_answer_time_to_secs,
+        bury_new_siblings=cfg.bury_new,
+        bury_review_siblings=cfg.bury_reviews,
+        new_cards_ignore_review_limit=upd.new_cards_ignore_review_limit,
+        apply_all_parent_limits=upd.apply_all_parent_limits,
+        fsrs=upd.fsrs,
+        desired_retention=round(cfg.desired_retention, 4) if upd.fsrs else None,
+    )
+
+
 @router.get("/decks/{deck_id}/options", response_model=DeckOptions)
 def deck_options(deck_id: int, manager: CollectionManager = Depends(get_manager)):
-    """Il preset di opzioni del mazzo (in sola lettura: si cambia da Anki desktop)."""
+    """Il preset di opzioni del mazzo, i limiti propri del mazzo e le opzioni della collezione."""
+    with manager.use() as col:
+        deck = _deck_or_404(col, deck_id)
+        return _options_out(col, deck_id, deck)
+
+
+@router.put("/decks/{deck_id}/options", response_model=DeckOptions)
+def update_deck_options(
+    deck_id: int,
+    body: DeckOptionsIn,
+    manager: CollectionManager = Depends(get_manager),
+    sync: SyncService = Depends(get_sync),
+):
+    """Salva le opzioni come la schermata di Anki desktop: assegna il mazzo a `preset_id`,
+    scrive i campi del preset (che valgono per tutti i mazzi che lo usano) e i limiti propri
+    del mazzo. Passa da `update_deck_configs`, quindi è un'operazione annullabile di Anki e
+    i campi che la PWA non mostra restano com'erano."""
     with manager.use() as col:
         deck = _deck_or_404(col, deck_id)
         if deck.get("dyn"):
-            return DeckOptions(deck_id=deck_id, deck_name=deck["name"], filtered=True)
-        conf = col.decks.config_dict_for_deck_id(deck_id)
-        fsrs = bool(col.get_config("fsrs", False))
-        return DeckOptions(
-            deck_id=deck_id,
-            deck_name=deck["name"],
-            filtered=False,
-            preset_id=conf["id"],
-            preset_name=conf["name"],
-            new_per_day=conf["new"]["perDay"],
-            reviews_per_day=conf["rev"]["perDay"],
-            learn_steps_min=list(conf["new"]["delays"]),
-            relearn_steps_min=list(conf["lapse"]["delays"]),
-            max_answer_seconds=conf.get("maxTaken", 60),
-            bury_new_siblings=conf["new"].get("bury", False),
-            bury_review_siblings=conf["rev"].get("bury", False),
-            fsrs=fsrs,
-            desired_retention=conf.get("desiredRetention") if fsrs else None,
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "I mazzi filtrati non hanno opzioni")
+        upd = col.decks.get_deck_configs_for_update(deck_id)
+        preset = next((c.config for c in upd.all_config if c.config.id == body.preset_id), None)
+        if preset is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Preset non trovato")
+        cfg = preset.config
+        cfg.new_per_day = body.new_per_day
+        cfg.reviews_per_day = body.reviews_per_day
+        cfg.learn_steps[:] = body.learn_steps_min
+        cfg.relearn_steps[:] = body.relearn_steps_min
+        cfg.cap_answer_time_to_secs = body.max_answer_seconds
+        cfg.bury_new = body.bury_new_siblings
+        cfg.bury_reviews = body.bury_review_siblings
+        if upd.fsrs and body.desired_retention is not None:
+            cfg.desired_retention = body.desired_retention
+
+        lim = upd.current_deck.limits
+        dl = body.deck_limits
+        # Campo assente = limite del preset. «Solo oggi» il backend di Anki lo lega al giorno
+        # corrente: domani torna da sé al limite normale (i flag `*_active` sono solo in lettura).
+        for field, value in (
+            ("new", dl.new),
+            ("review", dl.review),
+            ("new_today", dl.new_today),
+            ("review_today", dl.review_today),
+        ):
+            if value is None:
+                lim.ClearField(field)
+            else:
+                setattr(lim, field, value)
+
+        col.decks.update_deck_configs(
+            UpdateDeckConfigs(
+                target_deck_id=deck_id,
+                # il mazzo prende l'ultimo preset dell'elenco: qui l'unico
+                configs=[preset],
+                removed_config_ids=[],
+                mode=UpdateDeckConfigsMode.UPDATE_DECK_CONFIGS_MODE_NORMAL,
+                card_state_customizer=upd.card_state_customizer,
+                limits=lim,
+                new_cards_ignore_review_limit=body.new_cards_ignore_review_limit,
+                apply_all_parent_limits=body.apply_all_parent_limits,
+                fsrs=upd.fsrs,
+                fsrs_reschedule=False,
+                fsrs_health_check=upd.fsrs_health_check,
+            )
         )
+        out = _options_out(col, deck_id, col.decks.get(deck_id))
+    sync.request_soon()
+    return out
 
 
 @router.post("/decks/{deck_id}/extend-limits", response_model=StudyState)
