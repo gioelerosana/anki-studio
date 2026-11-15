@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Counts(BaseModel):
@@ -273,21 +273,87 @@ class StatsOut(BaseModel):
     generated_at: float
 
 
+class DeckPreset(BaseModel):
+    """Un preset di opzioni con i campi che la PWA sa modificare: servono tutti per
+    passare il mazzo a un altro preset senza un'altra richiesta."""
+
+    id: int
+    name: str
+    # quanti mazzi lo usano: con più di uno, cambiarlo cambia anche gli altri
+    use_count: int
+    new_per_day: int
+    reviews_per_day: int
+    learn_steps_min: list[float]
+    relearn_steps_min: list[float]
+    max_answer_seconds: int
+    bury_new_siblings: bool
+    bury_review_siblings: bool
+    desired_retention: float
+
+
+class DeckLimits(BaseModel):
+    """Limiti propri del mazzo, sopra quelli del preset (le schede «Questo mazzo» e «Solo
+    oggi» di Anki desktop). `None` = si usa il limite del preset."""
+
+    new: int | None = None
+    review: int | None = None
+    new_today: int | None = None
+    review_today: int | None = None
+
+
 class DeckOptions(BaseModel):
     deck_id: int
     deck_name: str
     filtered: bool
     preset_id: int | None = None
     preset_name: str | None = None
+    presets: list[DeckPreset] = []
     new_per_day: int | None = None
     reviews_per_day: int | None = None
+    deck_limits: DeckLimits = DeckLimits()
     learn_steps_min: list[float] = []
     relearn_steps_min: list[float] = []
     max_answer_seconds: int | None = None
     bury_new_siblings: bool = False
     bury_review_siblings: bool = False
+    # opzioni della collezione, non del preset: valgono per tutti i mazzi
+    new_cards_ignore_review_limit: bool = False
+    apply_all_parent_limits: bool = False
     fsrs: bool = False
     desired_retention: float | None = None
+
+
+# Passi in minuti, come in Anki: da un secondo a un anno, al massimo 20.
+_Step = Annotated[float, Field(gt=0, le=525_600)]
+_PerDay = Annotated[int, Field(ge=0, le=9999)]
+
+
+class DeckOptionsIn(BaseModel):
+    """Salvataggio delle opzioni (PUT /api/decks/{id}/options). Il mazzo passa al preset
+    `preset_id` e i campi del preset si scrivono lì: se lo usano altri mazzi, cambiano anche
+    per loro. I limiti di `deck_limits` restano solo di questo mazzo."""
+
+    preset_id: int
+    new_per_day: _PerDay
+    reviews_per_day: _PerDay
+    deck_limits: DeckLimits = DeckLimits()
+    learn_steps_min: list[_Step] = Field(default_factory=list, max_length=20)
+    relearn_steps_min: list[_Step] = Field(default_factory=list, max_length=20)
+    max_answer_seconds: int = Field(60, ge=1, le=7200)
+    bury_new_siblings: bool = False
+    bury_review_siblings: bool = False
+    new_cards_ignore_review_limit: bool = False
+    apply_all_parent_limits: bool = False
+    # considerata solo con FSRS attivo
+    desired_retention: float | None = Field(None, ge=0.7, le=0.99)
+
+    @field_validator("deck_limits")
+    @classmethod
+    def _limits_in_range(cls, v: DeckLimits) -> DeckLimits:
+        for n in (v.new, v.review, v.new_today, v.review_today):
+            if n is not None and not 0 <= n <= 9999:
+                raise ValueError("I limiti vanno da 0 a 9999")
+        return v
 
 
 class ExtendLimitsIn(BaseModel):

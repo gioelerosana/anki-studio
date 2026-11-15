@@ -303,7 +303,8 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET | `/api/decks/{id}/study` | Prossima carta del mazzo (`done: true` se hai finito) |
 | POST | `/api/decks/{id}/study/answer` | `{card_id, rating: 1-4, time_taken_ms}`, restituisce già la carta successiva |
 | POST | `/api/decks/{id}/study/undo` | Annulla l'ultima risposta o azione **dello studio** (409 se non c'è niente: mai le modifiche di agenti, approvazioni o selezioni di mazzo) |
-| GET | `/api/decks/{id}/options` | Preset del mazzo (limiti, passi, FSRS), sola lettura |
+| GET | `/api/decks/{id}/options` | Preset del mazzo (limiti, passi, FSRS), tutti i preset, limiti propri del mazzo (`deck_limits`) |
+| PUT | `/api/decks/{id}/options` | Salva come Anki desktop (`update_deck_configs`, annullabile): assegna il mazzo a `preset_id` e ne scrive i campi (valgono per tutti i mazzi che lo usano); `deck_limits.new`/`review` = «Questo mazzo», `new_today`/`review_today` = «Solo oggi», `null` = limite del preset |
 | POST | `/api/decks/{id}/extend-limits` | `{new, review}`: "studia altre N carte oggi", restituisce lo StudyState |
 | POST | `/api/cards/{id}/bury` · `/suspend` | Seppellisci / sospendi (204; con `?deck_id=` → StudyState) |
 | POST | `/api/cards/{id}/flag` | `{flag: 0-7}` |

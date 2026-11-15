@@ -86,3 +86,52 @@ def test_deck_options_and_extend_limits(seeded_client):
     assert c.get(f"/api/decks/{nomi['id']}/study").json()["counts"]["new"] == 3
     s = c.post(f"/api/decks/{nomi['id']}/extend-limits", json={"new": 4}).json()
     assert s["counts"]["new"] == 7 and s["deck_name"] == "Lingue::Spagnolo::Nomi"
+
+
+def _options_body(o: dict, **changes) -> dict:
+    keys = (
+        "preset_id new_per_day reviews_per_day deck_limits learn_steps_min relearn_steps_min "
+        "max_answer_seconds bury_new_siblings bury_review_siblings new_cards_ignore_review_limit "
+        "apply_all_parent_limits desired_retention"
+    ).split()
+    return {k: o[k] for k in keys} | changes
+
+
+def test_save_deck_options(seeded_client):
+    c = seeded_client
+    nomi = _deck(c, "Lingue::Spagnolo::Nomi")
+    url = f"/api/decks/{nomi['id']}/options"
+    o = c.get(url).json()
+    assert o["presets"] and any(p["id"] == o["preset_id"] for p in o["presets"])
+    assert o["deck_limits"] == {"new": None, "review": None, "new_today": None, "review_today": None}
+
+    # preset: passi e limiti nuovi
+    o = c.put(url, json=_options_body(o, new_per_day=3, learn_steps_min=[1, 10, 60])).json()
+    assert o["new_per_day"] == 3 and o["learn_steps_min"] == [1, 10, 60]
+    assert c.get(f"/api/decks/{nomi['id']}/study").json()["counts"]["new"] == 3
+
+    # «questo mazzo» vince sul preset; tornando a null si riprende il limite del preset
+    o = c.put(url, json=_options_body(o, deck_limits={"new": 5, "review": 25})).json()
+    assert o["deck_limits"]["new"] == 5 and o["deck_limits"]["review"] == 25 and o["new_per_day"] == 3
+    assert c.get(f"/api/decks/{nomi['id']}/study").json()["counts"]["new"] == 5
+    o = c.put(url, json=_options_body(o, deck_limits={"new_today": 2})).json()
+    assert o["deck_limits"] == {"new": None, "review": None, "new_today": 2, "review_today": None}
+    assert c.get(f"/api/decks/{nomi['id']}/study").json()["counts"]["new"] == 2
+    o = c.put(url, json=_options_body(o, deck_limits={})).json()
+    assert c.get(f"/api/decks/{nomi['id']}/study").json()["counts"]["new"] == 3
+
+    # le opzioni della collezione si salvano insieme
+    o = c.put(url, json=_options_body(o, new_cards_ignore_review_limit=True)).json()
+    assert o["new_cards_ignore_review_limit"] is True
+
+
+def test_save_deck_options_rejects_bad_input(seeded_client):
+    c = seeded_client
+    nomi = _deck(c, "Lingue::Spagnolo::Nomi")
+    url = f"/api/decks/{nomi['id']}/options"
+    o = c.get(url).json()
+    assert c.put(url, json=_options_body(o, preset_id=987654)).status_code == 404
+    assert c.put(url, json=_options_body(o, new_per_day=-1)).status_code == 422
+    assert c.put(url, json=_options_body(o, learn_steps_min=[0])).status_code == 422
+    assert c.put(url, json=_options_body(o, deck_limits={"new": 10000})).status_code == 422
+    assert c.put("/api/decks/1234/options", json=_options_body(o)).status_code == 404

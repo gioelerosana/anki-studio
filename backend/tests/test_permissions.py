@@ -56,6 +56,7 @@ def forbidden_requests(ids):
         ("POST", f"/api/decks/{d}/study/answer", {"card_id": c, "rating": 3, "time_taken_ms": 1}),
         ("POST", f"/api/decks/{d}/study/undo", None),
         ("POST", f"/api/decks/{d}/extend-limits", {"new": 1}),
+        ("PUT", f"/api/decks/{d}/options", {"preset_id": 1, "new_per_day": 1, "reviews_per_day": 1}),
         ("POST", f"/api/cards/{c}/suspend", None),
         ("POST", f"/api/cards/{c}/bury", None),
         ("POST", f"/api/cards/{c}/flag", {"flag": 1}),
