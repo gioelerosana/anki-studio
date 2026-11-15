@@ -3,7 +3,7 @@
  * (che apre il mazzo sul computer invece che qui).
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronRight, Eye, EyeOff } from 'lucide-react';
+import { ChevronRight, Eye, EyeOff, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@anki-studio/ui-kit';
 import type { DeckNode } from '../api/types';
 import { DeckContextMenu } from './DeckContextMenu';
@@ -70,10 +70,13 @@ function isHiddenBranch(nodes: DeckNode[], hidden: Set<number>, inherited = fals
 export function DeckList({
   decks,
   onOpen,
+  onOptions,
   disabled = false,
 }: {
   decks: DeckNode[];
   onOpen: (deck: DeckNode) => void;
+  /** Voce «Opzioni del mazzo» nel menu contestuale (non nel telecomando). */
+  onOptions?: (deck: DeckNode) => void;
   disabled?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(() => readIds(COLLAPSED_KEY));
@@ -146,11 +149,14 @@ export function DeckList({
           y={menu.y}
           title={menu.deck.full_name}
           onClose={() => setMenu(null)}
-          items={
+          items={[
+            ...(onOptions
+              ? [{ id: 'options', label: 'Opzioni del mazzo', icon: <SlidersHorizontal />, onSelect: () => onOptions(menu.deck) }]
+              : []),
             hidden.has(menu.deck.id)
-              ? [{ id: 'show', label: 'Mostra mazzo', icon: <Eye />, onSelect: () => setDeckHidden(menu.deck.id, false) }]
-              : [{ id: 'hide', label: 'Nascondi mazzo', icon: <EyeOff />, onSelect: () => setDeckHidden(menu.deck.id, true) }]
-          }
+              ? { id: 'show', label: 'Mostra mazzo', icon: <Eye />, onSelect: () => setDeckHidden(menu.deck.id, false) }
+              : { id: 'hide', label: 'Nascondi mazzo', icon: <EyeOff />, onSelect: () => setDeckHidden(menu.deck.id, true) },
+          ]}
         />
       ) : null}
     </>

@@ -120,6 +120,7 @@ export function DecksScreen() {
                   primeAudio();
                   navigate({ name: 'study', deckId: deck.id });
                 }}
+                onOptions={(deck) => navigate({ name: 'settings', section: 'decks', deckId: deck.id })}
               />
             </>
           )}

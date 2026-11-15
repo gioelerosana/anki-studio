@@ -55,7 +55,7 @@ function Screen({ route }: { route: Route }) {
     case 'add':
       return <AddScreen deckId={route.deckId} />;
     case 'settings':
-      return <SettingsScreen />;
+      return <SettingsScreen section={route.section} deckId={route.deckId} />;
     case 'remote':
       return <RemoteScreen />;
     case 'library':

@@ -130,7 +130,7 @@ e il suo «ok» sblocca i passi 3–6.
 - [x] Azioni sulla carta: seppellisci, sospendi, flag, modifica nota
 - [x] Aggiunta carte (tipo di nota, mazzo, campi, tag)
 - [x] Stato sync: login AnkiWeb, avanzamento media, conflitto full sync con conferma
-- [x] Impostazioni (tema, riduci animazioni, scollega) e statistiche di oggi
+- [x] Impostazioni a sezioni (come XMap Studio): opzioni dei mazzi, tema, riduci animazioni, scollega, statistiche di oggi
 - [x] Telecomando: il telefono sceglie il mazzo e comanda lo studio aperto sul computer (`#/remote`, WebSocket `/api/remote`)
 - [x] Hub delle flashcard: Libreria, attività recenti degli agenti con annullamento e gestione token (piano in [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md))
 - [ ] Telecomando provato su iPhone + computer veri (Wake Lock, riconnessione dopo lo standby)
@@ -149,7 +149,7 @@ e il suo «ok» sblocca i passi 3–6.
 - [x] Hub per gli agenti: API di creazione in blocco (le note entrano subito, niente bozze) e token con scope, diario delle operazioni con annullamento (`/api/hub/operations`, tool MCP `list_operations`/`undo_operation`), server MCP su `/mcp` (Bearer e OAuth Authentik), media — [`docs/PIANO-HUB.md`](docs/PIANO-HUB.md)
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
-- [ ] Modifica delle opzioni del mazzo dalla PWA (oggi sola lettura)
+- [x] Modifica delle opzioni del mazzo dalla PWA (preset, limiti per mazzo e per oggi, passi, seppellimento: `PUT /api/decks/{id}/options`)
 
 **Immagine e deploy**
 - [x] Immagine Docker unica (PWA servita da FastAPI), multi-arch, hardening, versione in `/api/health`
