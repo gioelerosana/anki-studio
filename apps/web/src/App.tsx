@@ -21,12 +21,17 @@ export function App() {
   return (
     <ToastProvider>
       <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
-        {/* Striscia opaca sotto la status bar. Su iPadOS 26 la PWA installata disegna comunque
-            il contenuto sotto la barra (lo stile "default" non basta) e il sistema ci mette
-            sopra una sfumatura. WebKit la sostituisce con un colore pieno solo se in cima c'è un
-            elemento fixed, largo quanto la vista e con uno sfondo opaco: questo, in ogni schermata.
-            Altezza 0 fuori dalla PWA (nessuna safe area), quindi nel browser non si vede. */}
-        <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-[env(safe-area-inset-top)] bg-background" />
+        {/* Fascia opaca fissa in cima, alta quanto status bar + barra superiore. Su iPadOS 26 la PWA
+            installata disegna il contenuto sotto la status bar e il sistema vi mette una sfumatura
+            (scroll edge effect) che dimensiona sugli elementi fixed in cima alla pagina: con una
+            striscia alta solo quanto la status bar la sfumatura scendeva sui titoli dell'header.
+            Coprendo anche la barra superiore, WebKit la tratta come l'header fisso e colora la
+            status bar a tinta unita. È sotto l'header (z-30 < z-40), non intercetta tocchi e
+            fuori dalla PWA (safe area 0) ha altezza 0: il min() evita di moltiplicare lo 0. */}
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-x-0 top-0 z-30 h-[min(calc(env(safe-area-inset-top)*1000),calc(env(safe-area-inset-top)+var(--topbar-height)))] bg-background"
+        />
         <AuthGate>
           <SyncProvider>
             <Connected />
