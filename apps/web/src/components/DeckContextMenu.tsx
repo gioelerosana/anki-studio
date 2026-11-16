@@ -12,6 +12,8 @@ export interface DeckContextItem {
   id: string;
   label: string;
   icon?: ReactNode;
+  /** Azione distruttiva (elimina): in rosso, come nel Menu del ui-kit. */
+  destructive?: boolean;
   onSelect: () => void;
 }
 
@@ -100,11 +102,11 @@ export function DeckContextMenu({
           }}
           className={cn(
             'flex h-8 w-full select-none items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors coarse:h-11',
-            'text-foreground hover:bg-accent focus-visible:bg-accent',
+            item.destructive ? 'text-error-foreground hover:bg-error/8 focus-visible:bg-error/8 dark:hover:bg-error/16 dark:focus-visible:bg-error/16' : 'text-foreground hover:bg-accent focus-visible:bg-accent',
           )}
         >
           {item.icon ? (
-            <span className="flex shrink-0 items-center text-muted-foreground [&_svg]:size-4">{item.icon}</span>
+            <span className={cn('flex shrink-0 items-center [&_svg]:size-4', item.destructive ? 'text-error-foreground' : 'text-muted-foreground')}>{item.icon}</span>
           ) : null}
           <span className="flex-1 truncate">{item.label}</span>
         </button>

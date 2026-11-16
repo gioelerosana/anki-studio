@@ -44,6 +44,8 @@ def forbidden_requests(ids):
         # distruttive o riservate all'utente
         ("POST", f"/api/notes/{n}/move", {"deck_id": d}),
         ("DELETE", f"/api/notes/{n}", None),
+        ("GET", f"/api/decks/{d}", None),
+        ("DELETE", f"/api/decks/{d}", None),
         ("POST", "/api/notes/tags", {"note_ids": [n], "add": ["x"]}),
         ("POST", "/api/notes", {"deck_id": d, "notetype_id": 1, "fields": {}}),
         ("POST", "/api/tokens", {"name": "altro"}),

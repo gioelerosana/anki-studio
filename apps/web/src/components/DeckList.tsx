@@ -3,7 +3,7 @@
  * (che apre il mazzo sul computer invece che qui).
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { ChevronRight, Eye, EyeOff, SlidersHorizontal } from 'lucide-react';
+import { ChevronRight, Eye, EyeOff, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '@anki-studio/ui-kit';
 import type { DeckNode } from '../api/types';
 import { DeckContextMenu } from './DeckContextMenu';
@@ -71,12 +71,15 @@ export function DeckList({
   decks,
   onOpen,
   onOptions,
+  onDelete,
   disabled = false,
 }: {
   decks: DeckNode[];
   onOpen: (deck: DeckNode) => void;
   /** Voce «Opzioni del mazzo» nel menu contestuale (non nel telecomando). */
   onOptions?: (deck: DeckNode) => void;
+  /** Voce «Elimina mazzo» (non nel telecomando): la conferma la chiede chi la passa. */
+  onDelete?: (deck: DeckNode) => void;
   disabled?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(() => readIds(COLLAPSED_KEY));
@@ -156,6 +159,9 @@ export function DeckList({
             hidden.has(menu.deck.id)
               ? { id: 'show', label: 'Mostra mazzo', icon: <Eye />, onSelect: () => setDeckHidden(menu.deck.id, false) }
               : { id: 'hide', label: 'Nascondi mazzo', icon: <EyeOff />, onSelect: () => setDeckHidden(menu.deck.id, true) },
+            ...(onDelete
+              ? [{ id: 'delete', label: 'Elimina mazzo…', icon: <Trash2 />, destructive: true, onSelect: () => onDelete(menu.deck) }]
+              : []),
           ]}
         />
       ) : null}
