@@ -10,6 +10,11 @@
 import { useEffect, useState } from 'react';
 import { CloudDownload, CloudUpload } from 'lucide-react';
 import { Banner, Button, Modal, cn } from '@anki-studio/ui-kit';
+import { desktop } from '../app/desktop';
+
+// Sull'app desktop la collezione da tenere o sostituire è quella locale, non quella del server:
+// le parole devono dire esattamente quale delle due si perde.
+const HERE = desktop ? { this: 'questo computer', the: 'del computer' } : { this: 'questo server', the: 'del server' };
 
 type Direction = 'download' | 'upload';
 
@@ -19,15 +24,15 @@ const OPTIONS: { id: Direction; title: string; icon: React.ReactNode; detail: st
     title: 'Tieni AnkiWeb',
     icon: <CloudDownload className="size-5" />,
     detail:
-      'Scarica la collezione di AnkiWeb e sostituisce quella di questo server. Le revisioni e le carte fatte qui dopo l’ultima sync vanno perse.',
-    confirm: 'Sostituisci la collezione del server',
+      `Scarica la collezione di AnkiWeb e sostituisce quella di ${HERE.this}. Le revisioni e le carte fatte qui dopo l’ultima sync vanno perse.`,
+    confirm: `Sostituisci la collezione ${HERE.the}`,
   },
   {
     id: 'upload',
-    title: 'Tieni questo server',
+    title: `Tieni ${HERE.this}`,
     icon: <CloudUpload className="size-5" />,
     detail:
-      'Carica la collezione di questo server e sostituisce quella di AnkiWeb. Le modifiche fatte su Anki desktop o AnkiMobile e non sincronizzate vanno perse; quei dispositivi dovranno riscaricare tutto.',
+      `Carica la collezione di ${HERE.this} e sostituisce quella di AnkiWeb. Le modifiche fatte su Anki desktop o AnkiMobile e non sincronizzate vanno perse; quei dispositivi dovranno riscaricare tutto.`,
     confirm: 'Sostituisci la collezione di AnkiWeb',
   },
 ];
@@ -66,7 +71,7 @@ export function FullSyncDialog({
       description={
         confirming
           ? undefined
-          : 'Le collezioni di AnkiWeb e di questo server sono cambiate in modo incompatibile (per esempio un tipo di nota modificato su Anki desktop). Scegli quale tenere: l’altra verrà sostituita.'
+          : `Le collezioni di AnkiWeb e di ${HERE.this} sono cambiate in modo incompatibile (per esempio un tipo di nota modificato su Anki desktop). Scegli quale tenere: l’altra verrà sostituita.`
       }
       footer={
         confirming && selected ? (

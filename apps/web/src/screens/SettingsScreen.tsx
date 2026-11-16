@@ -23,6 +23,7 @@ import { api } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, TodayStats } from '../api/types';
 import { useAuth } from '../app/auth';
+import { desktop } from '../app/desktop';
 import { formatDuration, formatRelative } from '../app/format';
 import { navigate, type SettingsSection } from '../app/route';
 import { AgentsSection } from '../agents/AgentsSection';
@@ -60,6 +61,9 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'shortcuts', label: 'Tastiera', icon: <Keyboard /> },
   { id: 'about', label: 'Informazioni', icon: <Info /> },
 ];
+
+// Sul desktop non c'è il server MCP né i token: gli agenti lavorano con il server cloud.
+const VISIBLE_SECTIONS = desktop ? SECTIONS.filter((s) => s.id !== 'agents') : SECTIONS;
 
 export function SettingsScreen({ section = 'decks', deckId }: { section?: SettingsSection; deckId?: number }) {
   const { settings, update } = useSettings();
@@ -100,7 +104,7 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
           aria-label="Sezioni"
           className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] md:w-56 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:p-3 md:pl-[max(0.75rem,env(safe-area-inset-left))]"
         >
-          {SECTIONS.map((item) => (
+          {VISIBLE_SECTIONS.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -172,9 +176,17 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
               </Group>
             ) : null}
 
-            {section === 'agents' ? <AgentsSection /> : null}
+            {section === 'agents' && !desktop ? <AgentsSection /> : null}
 
-            {section === 'account' ? (
+            {section === 'account' && desktop ? (
+              <Group title="Account">
+                <Row label="Copia locale su questo computer" hint={`La collezione sta in ${desktop.dataDir} e si allinea al server e agli altri dispositivi con la sync di AnkiWeb.`}>
+                  {null}
+                </Row>
+              </Group>
+            ) : null}
+
+            {section === 'account' && !desktop ? (
               <Group title="Account">
                 <Row label={user?.name || 'Account Authentik'} hint={user?.username ? `Accesso con Authentik come ${user.username}` : 'Accesso con Authentik'}>
                   <Button variant="destructive-outline" icon={<LogOut />} onClick={() => setConfirmLogout(true)} className="coarse:h-10">
@@ -207,7 +219,9 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
                   <img src="/icon.svg" alt="" className="size-10 shrink-0 rounded-[10px] border" />
                   <div className="min-w-0">
                     <div className="text-sm font-medium">Anki Studio</div>
-                    <div className="font-mono text-2xs text-muted-foreground">{__APP_VERSION__}</div>
+                    <div className="font-mono text-2xs text-muted-foreground">
+                      {desktop ? `Desktop ${desktop.version}` : __APP_VERSION__}
+                    </div>
                     <p className="mt-1 text-sm text-muted-foreground">
                       Un’interfaccia minimale per studiare con Anki da iPad e telefono. Scheduling, carte e sync sono quelli di Anki.
                     </p>
