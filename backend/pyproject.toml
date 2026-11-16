@@ -18,6 +18,9 @@ dependencies = [
     # verifica della firma dei JWT di Authentik per l'OAuth di /mcp (app/mcp_auth.py).
     # Già richiesta da mcp, ma la usiamo direttamente: la dichiariamo noi.
     "PyJWT[crypto]>=2.10.1,<3",
+    # client WebSocket del ponte del telecomando dell'app desktop (app/remote_bridge.py).
+    # Già portata da uvicorn[standard], ma la usiamo direttamente: la dichiariamo noi.
+    "websockets>=14,<18",
 ]
 
 [project.optional-dependencies]

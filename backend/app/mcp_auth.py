@@ -364,6 +364,11 @@ class McpAuth:
                 log.info("JWT rifiutato: %s", e)
             else:
                 return self.verifier.identity(claims)
+        if identity is not None and identity.scope == "remote":
+            # il token del ponte del telecomando non è un agente: niente /mcp, neanche l'elenco
+            # degli strumenti (token_may lo fermerebbe comunque a ogni chiamata)
+            log.warning("Token del telecomando su /mcp rifiutato", extra={"client": _client(request)})
+            return JSONResponse({"detail": "Questo token serve solo al telecomando"}, status_code=403)
         if identity is None:
             # un token revocato è 401 ma non un tentativo di indovinare (l'agente ritenta)
             if not is_revoked_bearer(request, token):

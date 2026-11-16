@@ -75,6 +75,29 @@ class FlagIn(BaseModel):
 
 # ---- telecomando (app/remote.py) ---------------------------------------------
 
+# Limiti dell'albero dei mazzi nello stato dello schermo: arriva a ogni cambio di vista e il
+# relay lo tiene in memoria e lo rimanda a ogni telefono. Una collezione vera ne ha qualche
+# decina; il tetto impedisce a un client sbagliato (o al ponte di un'altra installazione) di
+# far crescere la memoria del server.
+REMOTE_MAX_DECKS = 2000
+REMOTE_MAX_DECK_DEPTH = 32
+
+
+class RemoteDeck(BaseModel):
+    """Un mazzo nell'elenco che lo schermo manda al telefono: solo ciò che serve a disegnarlo.
+    `name` è l'ultimo pezzo del nome (`Verbi`, non `Spagnolo::Verbi`), come `DeckNode.name`."""
+
+    id: int
+    name: str = Field(max_length=1000)
+    counts: Counts
+    children: list["RemoteDeck"] = Field(default_factory=list, max_length=REMOTE_MAX_DECKS)
+
+
+def _deck_tree_size(nodes: list[RemoteDeck], depth: int = 1) -> int:
+    if depth > REMOTE_MAX_DECK_DEPTH:
+        raise ValueError(f"albero dei mazzi più profondo di {REMOTE_MAX_DECK_DEPTH} livelli")
+    return sum(1 + _deck_tree_size(n.children, depth + 1) for n in nodes)
+
 
 class RemoteScreenState(BaseModel):
     """Cosa mostra lo schermo (la PWA aperta sul computer): il telefono lo usa per
@@ -103,6 +126,20 @@ class RemoteScreenState(BaseModel):
     can_undo: bool = False
     # una risposta è in viaggio verso il backend: i pulsanti vanno disattivati
     busy: bool = False
+    # da dove studia lo schermo, per il sottotitolo del telefono: la PWA in un browser o
+    # l'app desktop (che arriva al server attraverso il ponte, app/remote_bridge.py)
+    source: Literal["browser", "desktop"] = "browser"
+    # solo con `view == "decks"`: i mazzi come li vede lo schermo. Il telefono li preferisce a
+    # /api/decks del server, che per l'app desktop (copia locale) può essere indietro: dopo
+    # una sync gli id coincidono, i conteggi no. Senza (schermi di versioni vecchie), /api/decks.
+    decks: list[RemoteDeck] | None = Field(default=None, max_length=REMOTE_MAX_DECKS)
+
+    @field_validator("decks")
+    @classmethod
+    def _decks_limit(cls, v: list[RemoteDeck] | None) -> list[RemoteDeck] | None:
+        if v is not None and _deck_tree_size(v) > REMOTE_MAX_DECKS:
+            raise ValueError(f"più di {REMOTE_MAX_DECKS} mazzi")
+        return v
 
 
 class RemoteCommand(BaseModel):
@@ -514,18 +551,20 @@ class CardPreview(BaseModel):
 
 class TokenIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    # read: solo letture; write: legge e crea/modifica note (mai cancella, mai sync completa)
-    scope: Literal["read", "write"] = "write"
+    # read: solo letture; write: legge e crea/modifica note (mai cancella, mai sync completa);
+    # remote: solo il telecomando, come schermo (l'app desktop attraverso il ponte): nessuna
+    # rotta REST, niente /mcp
+    scope: Literal["read", "write", "remote"] = "write"
 
 
 class TokenUpdate(BaseModel):
-    scope: Literal["read", "write"] | None = None
+    scope: Literal["read", "write", "remote"] | None = None
 
 
 class TokenOut(BaseModel):
     id: str
     name: str
-    scope: Literal["read", "write"]
+    scope: Literal["read", "write", "remote"]
     # secondi epoch
     created_at: int
     last_used_at: int | None = None
@@ -545,3 +584,30 @@ class MediaIn(BaseModel):
 class MediaOut(BaseModel):
     # nome da usare nei campi: `<img src="…">` o `[sound:…]`
     filename: str
+
+
+# ---- ponte del telecomando (solo app desktop, app/remote_bridge.py) ------------------
+
+
+class RemoteBridgeIn(BaseModel):
+    """La configurazione del ponte dall'app desktop. `token` None = tieni quello salvato
+    (la PWA non lo rilegge mai: sa solo se c'è)."""
+
+    server_url: str = Field(min_length=1, max_length=500)
+    token: str | None = Field(default=None, min_length=8, max_length=200)
+    enabled: bool = True
+
+
+class RemoteBridgeStatus(BaseModel):
+    server_url: str | None = None
+    token_set: bool = False
+    enabled: bool = False
+    # off = scollegato o non configurato; connecting = primo tentativo; connected;
+    # retrying = caduto o rifiutato, riprova da solo (vedi `last_error` e `retry_at`)
+    status: Literal["off", "connecting", "connected", "retrying"] = "off"
+    last_error: str | None = None
+    # secondi epoch
+    connected_at: int | None = None
+    retry_at: int | None = None
+    # telefoni collegati al server come telecomando, quando il ponte è su
+    remotes: int = 0

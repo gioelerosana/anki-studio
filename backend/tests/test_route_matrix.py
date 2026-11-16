@@ -128,6 +128,7 @@ def test_only_the_public_routes_skip_require_auth(routes):
 def test_the_token_matrix_agrees_with_the_classification(routes):
     read = Identity(kind="token", name="r", scope="read")
     write = Identity(kind="token", name="w", scope="write")
+    remote = Identity(kind="token", name="t", scope="remote")
     for method, path, _ in routes:
         kind = MATRIX[(method, path)]
         if kind == PUBLIC:
@@ -135,6 +136,8 @@ def test_the_token_matrix_agrees_with_the_classification(routes):
         p = concrete(path)
         assert token_may(read, method, p) == (kind == READ), (method, path, "read")
         assert token_may(write, method, p) == (kind in (READ, WRITE)), (method, path, "write")
+        # il token del ponte del telecomando non chiama nessuna rotta
+        assert not token_may(remote, method, p), (method, path, "remote")
         # sessione e amministratore: sempre
         assert token_may(Identity(kind="session", name="x"), method, p)
 
@@ -143,6 +146,7 @@ def test_http_answers_match_the_classification(client, make_token, routes):
     """Non solo la tabella: la richiesta vera riceve 403 quando deve."""
     read_h, _ = make_token("lettore", scope="read")
     write_h, _ = make_token("scrittore", scope="write")
+    remote_h, _ = make_token("telecomando", scope="remote")
     for method, path, _ in routes:
         kind = MATRIX[(method, path)]
         if kind == PUBLIC:
@@ -152,6 +156,8 @@ def test_http_answers_match_the_classification(client, make_token, routes):
         assert (r.status_code == 403) == (kind != READ), (method, path, "read", r.status_code)
         w = client.request(method, url, json={}, headers=write_h)
         assert (w.status_code == 403) == (kind == ADMIN), (method, path, "write", w.status_code)
+        t = client.request(method, url, json={}, headers=remote_h)
+        assert t.status_code == 403, (method, path, "remote", t.status_code)
 
 
 def test_a_new_unlisted_route_is_caught(client):

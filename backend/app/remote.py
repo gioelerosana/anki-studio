@@ -18,12 +18,21 @@ lo stato in memoria, toccato sempre dallo stesso event loop, quindi niente lock.
 
 Perché WebSocket e non Server-Sent Events: allo spegnimento uvicorn chiude i WebSocket
 subito (codice 1012), mentre uno stream SSE lo aspetterebbe fino al timeout (30 s).
+
+L'app desktop ha un backend suo (127.0.0.1, copia locale della collezione), mentre il
+telefono apre il server: per farli incontrare il backend del desktop apre un ponte in uscita
+verso questo stesso WebSocket del server, come `screen`, con un token di scope `remote`
+(app/remote_bridge.py). Dal lato del server il ponte è uno schermo come gli altri; dal lato
+del desktop è un telefono in più: riceve lo stato dello schermo attivo (`on_active_state`) e
+consegna i comandi con `command`, come farebbe un telecomando locale. La sync non c'entra:
+resta quella di Anki con AnkiWeb, il relay inoltra soltanto.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -65,6 +74,16 @@ class RemoteHub:
         self.screens: dict[str, Peer] = {}
         self.remotes: set[Peer] = set()
         self._last_sent: dict[str, Any] | None | bool = False  # False = mai inviato
+        # i telefoni collegati al server, quando questo è il backend dell'app desktop e il ponte
+        # è su: per la schermata contano come telefoni locali (avviso «Telecomando collegato»)
+        self.bridged_remotes = 0
+        # il ponte (app/remote_bridge.py): `(stato dello schermo attivo | None, claim)` a ogni
+        # cambio. Sincrono e senza attese: il ponte mette da parte e spedisce dal suo task
+        self.on_active_state: Callable[[dict[str, Any] | None, bool], None] | None = None
+
+    @property
+    def remote_count(self) -> int:
+        return len(self.remotes) + self.bridged_remotes
 
     @property
     def full(self) -> bool:
@@ -86,7 +105,7 @@ class RemoteHub:
                 await old.ws.close(CLOSE_REPLACED)
             except Exception:  # noqa: BLE001
                 pass
-        await peer.send({"type": "remotes", "count": len(self.remotes)})
+        await peer.send({"type": "remotes", "count": self.remote_count})
 
     async def add_remote(self, peer: Peer) -> None:
         self.remotes.add(peer)
@@ -102,14 +121,39 @@ class RemoteHub:
         if peer.screen_id and self.screens.get(peer.screen_id) is peer:
             del self.screens[peer.screen_id]
             await self._broadcast_state()
+            self._notify_bridge(claim=False)
+
+    async def set_bridged_remotes(self, count: int) -> None:
+        if count != self.bridged_remotes:
+            self.bridged_remotes = count
+            await self._broadcast_remotes()
 
     # ---- messaggi ---------------------------------------------------------
 
-    async def screen_state(self, peer: Peer, state: RemoteScreenState, claim: bool) -> None:
-        peer.state = state.model_dump()
+    async def screen_state(
+        self, peer: Peer, state: RemoteScreenState | None, claim: bool
+    ) -> None:
+        # None: lo schermo c'è ma non ha niente da comandare (il ponte del desktop senza
+        # nessuna finestra aperta): per il telefono è come se non ci fosse
+        peer.state = state.model_dump() if state is not None else None
         if claim:
             peer.active_at = time.monotonic()
         await self._broadcast_state()
+        self._notify_bridge(claim=claim and self.active_screen() is peer)
+
+    def current_state(self) -> dict[str, Any] | None:
+        screen = self.active_screen()
+        return screen.state if screen else None
+
+    def ever_claimed(self) -> bool:
+        """Lo schermo attivo è stato in primo piano almeno una volta (per il ponte che si
+        ricollega: rivendica il telefono solo se la finestra l'aveva già fatto)."""
+        screen = self.active_screen()
+        return screen is not None and screen.active_at > 0
+
+    def _notify_bridge(self, claim: bool) -> None:
+        if self.on_active_state is not None:
+            self.on_active_state(self.current_state(), claim)
 
     async def command(self, command: RemoteCommand) -> bool:
         """Inoltra il comando allo schermo attivo; False se non ce n'è uno."""
@@ -132,7 +176,7 @@ class RemoteHub:
             await remote.send(message)
 
     async def _broadcast_remotes(self) -> None:
-        message = {"type": "remotes", "count": len(self.remotes)}
+        message = {"type": "remotes", "count": self.remote_count}
         for screen in list(self.screens.values()):
             await screen.send(message)
 
@@ -149,8 +193,9 @@ async def remote_socket(
 ):
     """WebSocket del telecomando. Messaggi JSON:
 
-    - schermo → server: `{"type": "state", "state": RemoteScreenState, "claim": bool}`
-      (`claim`: la schermata è in primo piano e diventa quella comandata);
+    - schermo → server: `{"type": "state", "state": RemoteScreenState | null, "claim": bool}`
+      (`claim`: la schermata è in primo piano e diventa quella comandata; `null`: niente da
+      comandare, lo manda il ponte del desktop quando non c'è nessuna finestra aperta);
     - telefono → server: `{"type": "command", "command": RemoteCommand}` (reveal, answer,
       undo, replay, bury, suspend, flag);
     - server → telefono: `{"type": "state", "screen": RemoteScreenState | null}`;
@@ -158,7 +203,8 @@ async def remote_socket(
     """
     hub: RemoteHub = websocket.app.state.remote
     # chiusura prima di accept() = handshake rifiutato (403): niente dettagli a chi non è entrato
-    if websocket_session(websocket, settings) is None:
+    # Bearer: `ANKI_API_TOKEN`, o un token `remote` solo come schermo (il ponte del desktop)
+    if websocket_session(websocket, settings, role) is None:
         await websocket.close(status.WS_1008_POLICY_VIOLATION)
         return
     if hub.full or (role == "screen" and screen_id is None):
@@ -179,7 +225,8 @@ async def remote_socket(
                     raise ValueError("messaggio non valido")
                 kind = data.get("type")
                 if role == "screen" and kind == "state":
-                    state = RemoteScreenState.model_validate(data.get("state"))
+                    raw = data.get("state")
+                    state = None if raw is None else RemoteScreenState.model_validate(raw)
                     await hub.screen_state(peer, state, bool(data.get("claim")))
                 elif role == "remote" and kind == "command":
                     command = RemoteCommand.model_validate(data.get("command"))

@@ -5,7 +5,8 @@ Sul disco resta solo l'hash SHA-256 (`<data>/tokens.json`, 0600, scrittura atomi
 può recuperare. Un hash veloce basta perché il token è casuale a 256 bit, non una
 password scelta da una persona: non c'è niente da "indovinare" a forza bruta.
 
-Ogni token ha un `scope` (`read` | `write`). Un file scritto da una versione più vecchia, con
+Ogni token ha un `scope` (`read` | `write` | `remote`; `remote` serve solo al ponte del
+telecomando dell'app desktop, app/remote_bridge.py, e non legge né modifica le carte). Un file scritto da una versione più vecchia, con
 il campo `review` (le bozze, eliminate), si legge lo stesso: i campi in più si ignorano.
 Il nome diventa lo slug del tag di provenienza `agent::<slug>`, per questo gli slug
 sono unici e il nome non si cambia dopo la creazione.
@@ -39,7 +40,7 @@ _PERSIST_EVERY_S = 60
 # con un token revocato: ne bastano pochi, i più vecchi si dimenticano
 _MAX_REVOKED = 500
 
-Scope = Literal["read", "write"]
+Scope = Literal["read", "write", "remote"]
 
 
 class TokenError(Exception):

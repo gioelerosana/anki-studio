@@ -258,8 +258,8 @@ class Identity:
 
     kind: Literal["session", "admin", "token", "oauth"]
     name: str
-    # admin = nessun limite (sessione e ANKI_API_TOKEN); read/write = token con scope
-    scope: Literal["admin", "read", "write"] = "admin"
+    # admin = nessun limite (sessione e ANKI_API_TOKEN); read/write/remote = token con scope
+    scope: Literal["admin", "read", "write", "remote"] = "admin"
     username: str | None = None
     token_id: str | None = None
 
@@ -316,6 +316,10 @@ def token_may(identity: Identity, method: str, path: str) -> bool:
     strumenti MCP, con il percorso REST equivalente: un permesso solo, in un posto solo."""
     if not identity.scoped:
         return True
+    if identity.scope == "remote":
+        # solo il WebSocket del telecomando come schermo (websocket_session): nessuna rotta,
+        # nessuno strumento MCP. Un token copiato dall'app desktop non legge le carte.
+        return False
     api_path = path.removeprefix("/api")
     if method == "GET":
         return _READ_RE.fullmatch(api_path) is not None
@@ -408,13 +412,21 @@ def require_auth(request: Request, settings: Settings = Depends(get_settings)) -
     return identity
 
 
-def websocket_session(websocket: HTTPConnection, settings: Settings) -> Identity | None:
+def websocket_session(
+    websocket: HTTPConnection, settings: Settings, role: Literal["screen", "remote"]
+) -> Identity | None:
     """Come require_auth, per i WebSocket (il telecomando): l'identità o None.
 
     Il controllo dell'origine vale anche qui, con qualunque metodo: un WebSocket non è
     soggetto a CORS, e senza questo controllo un'altra pagina di jshep.xyz aperta nello
-    stesso browser potrebbe pilotare lo studio con il cookie dell'utente.
-    I token con scope non pilotano lo studio: restano fuori dal telecomando.
+    stesso browser potrebbe pilotare lo studio con il cookie dell'utente. Non vale per i
+    Bearer: li manda un client che non è un browser (il ponte dell'app desktop), e un
+    browser non può aggiungere quell'header a un WebSocket.
+
+    Fra i token con scope entra solo `remote`, e solo come schermo (`role=screen`): è il ponte
+    dell'app desktop, che pubblica lo stato della sua schermata e ne riceve i comandi. Fare da
+    telefono vorrebbe dire pilotare lo studio di qualcun altro: quello resta alla sessione.
+    `read` e `write` restano fuori, sono gli agenti.
     """
     try:
         check_bearer_blocked(websocket)
@@ -423,7 +435,17 @@ def websocket_session(websocket: HTTPConnection, settings: Settings) -> Identity
     token = _bearer(websocket)
     if token is not None:
         identity = _identify_bearer(websocket, token, settings)
-        return identity if identity is not None and identity.kind == "admin" else None
+        if identity is None:
+            return None
+        if identity.kind == "admin":
+            return identity
+        if identity.kind == "token" and identity.scope == "remote" and role == "screen":
+            return identity
+        log.warning(
+            "WebSocket del telecomando non permesso al token",
+            extra={"agent": identity.agent, "role": role},
+        )
+        return None
     try:
         desktop = desktop_identity(websocket, settings)
     except HTTPException:
