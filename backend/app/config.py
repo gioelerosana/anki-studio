@@ -247,6 +247,11 @@ class Settings(BaseSettings):
         return self.anki_data_dir / "agent-ops.json"
 
     @property
+    def remote_bridge_path(self) -> Path:
+        """Configurazione del ponte del telecomando (solo app desktop, app/remote_bridge.py)."""
+        return self.anki_data_dir / "remote_bridge.json"
+
+    @property
     def backup_dir(self) -> Path:
         return self.anki_data_dir / "backups"
 

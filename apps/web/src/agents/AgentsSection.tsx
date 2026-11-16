@@ -7,6 +7,10 @@
  * nel riquadro del dialog, e sta in uno stato locale che sparisce alla chiusura. Non va
  * mai in localStorage, nei log né in un contesto più largo del dialog (AGENTS.md, regola 2).
  * Le istruzioni sono testo statico con l'origine della pagina: non si interroga /mcp.
+ *
+ * Qui si crea anche il token «Solo telecomando» (scope `remote`) per l'app desktop: non è un
+ * agente, serve solo al ponte con cui il computer si mostra al telefono
+ * (backend/app/remote_bridge.py), e il backend gli nega ogni rotta e /mcp.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, Check, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
@@ -24,11 +28,19 @@ import { ErrorBanner, describeError } from '../hub/errors';
 const SCOPE_ITEMS: { id: TokenScope; label: string }[] = [
   { id: 'write', label: 'Scrittura' },
   { id: 'read', label: 'Sola lettura' },
+  { id: 'remote', label: 'Solo telecomando' },
 ];
+
+const SCOPE_LABEL: Record<TokenScope, string> = {
+  write: 'Scrittura',
+  read: 'Sola lettura',
+  remote: 'Solo telecomando',
+};
 
 const SCOPE_HINT: Record<TokenScope, string> = {
   write: 'Legge, crea e modifica le proprie note. Non cancella mai e non fa la sync completa.',
   read: 'Può solo leggere mazzi, tag e note.',
+  remote: 'Solo telecomando: l’app desktop si mostra al telefono. Non legge né modifica le carte.',
 };
 
 /**
@@ -178,7 +190,7 @@ function TokenRow({ token, onEdit, onRevoke }: { token: ApiToken; onEdit: () => 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="truncate text-sm font-medium">{token.name}</span>
-          <Badge variant="secondary">{token.scope === 'write' ? 'Scrittura' : 'Sola lettura'}</Badge>
+          <Badge variant="secondary">{SCOPE_LABEL[token.scope]}</Badge>
         </div>
         <span className="text-2xs text-muted-foreground">
           Creato {formatRelative(token.created_at)} · {token.last_used_at ? `ultimo uso ${formatRelative(token.last_used_at)}` : 'mai usato'}
@@ -254,6 +266,11 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
         <div className="flex flex-col gap-3">
           <Banner variant="warning">Questo è l’unico momento in cui il token è visibile. Se lo perdi, revoca l’agente e creane uno nuovo.</Banner>
           <TokenBox token={created.token} />
+          {created.scope === 'remote' ? (
+            <p className="text-xs text-muted-foreground">
+              Incollalo nell’app desktop, in Impostazioni → Telecomando, con l’indirizzo <code className="font-mono">{window.location.origin}</code>.
+            </p>
+          ) : null}
         </div>
       </Modal>
     );
@@ -264,7 +281,7 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
       isOpen={isOpen}
       onClose={saving ? () => {} : onClose}
       title="Nuovo agente"
-      description="Dai un nome a chi userà il token: Claude, Hermes, uno script."
+      description="Dai un nome a chi userà il token: Claude, Hermes, uno script, o l’app desktop per il telecomando."
       size="md"
       footer={
         <>
@@ -285,7 +302,7 @@ function CreateTokenDialog({ isOpen, onClose, onCreated }: { isOpen: boolean; on
         }}
       >
         {error ? <Banner variant="error">{describeError(error).message}</Banner> : null}
-        <Field label="Nome" hint={slug ? `Le sue note avranno il tag agent::${slug}` : name.trim() ? 'Serve almeno una lettera o un numero (a-z, 0-9)' : 'Lettere, numeri e trattini'}>
+        <Field label="Nome" hint={slug ? (scope === 'remote' ? 'Per riconoscerlo, es. «Portatile»' : `Le sue note avranno il tag agent::${slug}`) : name.trim() ? 'Serve almeno una lettera o un numero (a-z, 0-9)' : 'Lettere, numeri e trattini'}>
           <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} size="lg" autoFocus autoCapitalize="none" autoCorrect="off" spellCheck={false} inputClassName="coarse:text-base" />
         </Field>
         <ScopeFields scope={scope} onScope={setScope} />

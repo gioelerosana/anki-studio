@@ -12,13 +12,17 @@
  *
  * Se sul computer c'è l'elenco dei mazzi, il telefono lo mostra e ne apre uno lì; durante
  * lo studio «Cambia mazzo» (menu, o a fine mazzo) riporta il computer all'elenco.
+ *
+ * Lo schermo può essere la PWA in un browser o l'app desktop, che arriva qui attraverso il
+ * server con il suo ponte (backend/app/remote_bridge.py): il sottotitolo dice quale, e i mazzi
+ * sono quelli che lo schermo manda nel suo stato (la copia locale del desktop), non /api/decks.
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, CircleCheck, EyeOff, Flag, Layers, Monitor, MoreHorizontal, Pause, Undo2, Volume2, VolumeOff } from 'lucide-react';
 import { Banner, Button, EmptyHint, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
 import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api } from '../api/client';
-import type { DeckNode, Rating, RemoteCommand, RemoteScreenState } from '../api/types';
+import type { DeckNode, Rating, RemoteCommand, RemoteDeck, RemoteScreenState } from '../api/types';
 import { navigate } from '../app/route';
 import { useToast } from '../app/toasts';
 import { DeckList } from '../components/DeckList';
@@ -36,6 +40,19 @@ const RATINGS: { rating: Rating; label: string }[] = [
 
 /** Dopo un tasto, i pulsanti restano spenti finché lo schermo non cambia stato (o per questo tempo). */
 const PENDING_TIMEOUT_MS = 2500;
+
+const SOURCE_LABEL: Record<NonNullable<RemoteScreenState['source']>, string> = {
+  desktop: 'Computer (app)',
+  browser: 'Browser',
+};
+
+/** I mazzi dello stato dello schermo nella forma di DeckList (livello e nome completo). */
+function toDeckNodes(decks: RemoteDeck[], parent = '', level = 1): DeckNode[] {
+  return decks.map((d) => {
+    const full = parent ? `${parent}::${d.name}` : d.name;
+    return { id: d.id, name: d.name, full_name: full, level, collapsed: false, counts: d.counts, children: toDeckNodes(d.children, full, level + 1) };
+  });
+}
 
 const stepKey = (s: RemoteScreenState | null) => (s ? `${s.view}:${s.deck_id}:${s.card_id}:${s.revealed}:${s.done}` : '');
 
@@ -100,6 +117,8 @@ export function RemoteScreen() {
   const study = screen?.view === 'study' ? screen : null;
   const card = study && !study.done && study.card_id !== null ? study : null;
   const deckLabel = study?.deck_name.split('::').pop() ?? '';
+  const sourceLabel = screen ? SOURCE_LABEL[screen.source ?? 'browser'] : '';
+  const subtitle = study ? deckLabel : screen?.view === 'decks' ? 'Scegli il mazzo' : undefined;
 
   const cardAction = (action: 'bury' | 'suspend') => {
     if (!card) return;
@@ -128,7 +147,7 @@ export function RemoteScreen() {
     <div className="flex h-full flex-col">
       <AppHeaderBar
         title="Telecomando"
-        subtitle={study ? deckLabel : screen?.view === 'decks' ? 'Scegli il mazzo' : undefined}
+        subtitle={screen ? [subtitle, sourceLabel].filter(Boolean).join(' · ') : undefined}
         leftContent={
           <Button variant="ghost" size="sm" icon={<ChevronLeft />} onClick={() => navigate({ name: 'decks' })} className="-ml-1.5 pl-1">
             Esci
@@ -174,7 +193,12 @@ export function RemoteScreen() {
           />
         </main>
       ) : screen.view === 'decks' ? (
-        <RemoteDeckPicker locked={locked} reconnecting={reconnecting} onOpen={(deck) => press({ action: 'open_deck', deck_id: deck.id })} />
+        <RemoteDeckPicker
+          screenDecks={screen.decks ?? null}
+          locked={locked}
+          reconnecting={reconnecting}
+          onOpen={(deck) => press({ action: 'open_deck', deck_id: deck.id })}
+        />
       ) : screen.view === 'other' ? (
         <main className="flex flex-1 items-center justify-center p-6">
           <EmptyHint
@@ -284,22 +308,29 @@ export function RemoteScreen() {
 
 
 /**
- * L'elenco dei mazzi quando sul computer c'è la schermata dei mazzi: il telefono lo legge
- * dall'API (la collezione è la stessa) e il tocco apre il mazzo sul computer.
+ * L'elenco dei mazzi quando sul computer c'è la schermata dei mazzi: quelli che lo schermo
+ * manda nel suo stato, se li manda (la sua collezione, anche la copia locale del desktop);
+ * altrimenti (schermi di versioni vecchie) dall'API del server. Il tocco apre il mazzo lì.
  */
 function RemoteDeckPicker({
+  screenDecks,
   locked,
   reconnecting,
   onOpen,
 }: {
+  screenDecks: RemoteDeck[] | null;
   locked: boolean;
   reconnecting: ReactNode;
   onOpen: (deck: DeckNode) => void;
 }) {
-  const [decks, setDecks] = useState<DeckNode[] | null>(null);
+  const [fetched, setDecks] = useState<DeckNode[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fromScreen = useMemo(() => (screenDecks ? toDeckNodes(screenDecks) : null), [screenDecks]);
+  const decks = fromScreen ?? fetched;
+  const needFetch = fromScreen === null;
 
   useEffect(() => {
+    if (!needFetch) return;
     let cancelled = false;
     api
       .decks()
@@ -312,14 +343,14 @@ function RemoteDeckPicker({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [needFetch]);
 
   return (
     <main className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
         {reconnecting}
         <p className="px-1 text-xs text-muted-foreground">Tocca un mazzo per studiarlo sul computer.</p>
-        {error ? <Banner variant="error">{error}</Banner> : null}
+        {error && !fromScreen ? <Banner variant="error">{error}</Banner> : null}
         {decks === null ? (
           error ? null : (
             <div className="flex justify-center p-8 text-muted-foreground">

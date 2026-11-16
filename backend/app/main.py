@@ -22,6 +22,8 @@ from .mcp_server import build_mcp
 from .oidc import OIDCClient
 from .remote import RemoteHub
 from .remote import router as remote_router
+from .remote_bridge import RemoteBridge
+from .remote_bridge import router as bridge_router
 from .security import (
     RateLimiter,
     Signer,
@@ -135,6 +137,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # partire questo (senza, la prima richiesta a /mcp fallisce con "Task group is not
         # initialized"). Si chiude per primo: nessuna chiamata MCP resta aperta sulla collezione
         # mentre la chiudiamo.
+        # il ponte del telecomando (solo desktop): parte da sé se è configurato, e senza rete
+        # riprova in background, quindi l'avvio non lo aspetta mai
+        bridge: RemoteBridge | None = getattr(app.state, "bridge", None)
+        if bridge is not None:
+            await bridge.start()
         mcp_stack = AsyncExitStack()
         mcp_app = getattr(app.state, "mcp", None)
         if mcp_app is not None:
@@ -142,6 +149,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            if bridge is not None:
+                await bridge.stop()
             await mcp_stack.aclose()
             if task:
                 task.cancel()
@@ -190,6 +199,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.signer = Signer(session_key(settings))
     app.state.oidc = OIDCClient(settings) if settings.oidc_enabled else None
     app.state.remote = RemoteHub()
+    if settings.desktop_mode:
+        # solo l'app desktop si collega al telecomando del server (app/remote_bridge.py)
+        app.state.bridge = RemoteBridge(app.state.remote, settings.remote_bridge_path)
     app.state.tokens = TokenStore(settings.tokens_path)
     app.state.journal = Journal(settings.journal_path)
     if settings.anki_mcp_enabled:
@@ -303,6 +315,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # anche (require_auth vuole una Request HTTP): app/security.websocket_session
     app.include_router(auth.router, prefix="/api")
     app.include_router(remote_router, prefix="/api")
+    if settings.desktop_mode:
+        # l'accesso lo controlla la rotta (require_desktop, che passa anche da require_auth)
+        app.include_router(bridge_router, prefix="/api")
     if web is not None:
         # La PWA è il "default" del router, non un Mount su "/": così entra in gioco solo
         # quando nessuna rotta corrisponde, e un metodo sbagliato su una rotta API resta 405.

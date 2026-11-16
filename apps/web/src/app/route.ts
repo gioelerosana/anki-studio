@@ -18,7 +18,7 @@ export type Route =
   | { name: 'library' };
 
 /** Sezioni delle impostazioni (#/settings/<sezione>); `decks` può aprire un mazzo (#/settings/decks/123). */
-export const SETTINGS_SECTIONS = ['decks', 'appearance', 'sync', 'agents', 'account', 'shortcuts', 'about'] as const;
+export const SETTINGS_SECTIONS = ['decks', 'appearance', 'sync', 'agents', 'remote', 'account', 'shortcuts', 'about'] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {

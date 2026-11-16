@@ -6,7 +6,7 @@
  * «Mazzi» è la sezione principale: apre le opzioni di ogni mazzo (DeckOptionsPanel).
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bot, ChevronLeft, ChevronRight, Cloud, Info, Keyboard, Layers, LogOut, Palette, UserRound } from 'lucide-react';
+import { Bot, ChevronLeft, ChevronRight, Cloud, Gamepad2, Info, Keyboard, Layers, LogOut, Palette, UserRound } from 'lucide-react';
 import {
   Banner,
   Button,
@@ -27,6 +27,7 @@ import { desktop } from '../app/desktop';
 import { formatDuration, formatRelative } from '../app/format';
 import { navigate, type SettingsSection } from '../app/route';
 import { AgentsSection } from '../agents/AgentsSection';
+import { RemoteBridgeSection } from '../remote/RemoteBridgeSection';
 import { Group, Row } from '../components/SettingsParts';
 import { DeckOptionsPanel } from '../decks/DeckOptionsPanel';
 import { useSettings, type ThemePreference } from '../settings';
@@ -57,13 +58,15 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'appearance', label: 'Aspetto', icon: <Palette /> },
   { id: 'sync', label: 'Sync', icon: <Cloud /> },
   { id: 'agents', label: 'Agenti', icon: <Bot /> },
+  { id: 'remote', label: 'Telecomando', icon: <Gamepad2 /> },
   { id: 'account', label: 'Account', icon: <UserRound /> },
   { id: 'shortcuts', label: 'Tastiera', icon: <Keyboard /> },
   { id: 'about', label: 'Informazioni', icon: <Info /> },
 ];
 
-// Sul desktop non c'è il server MCP né i token: gli agenti lavorano con il server cloud.
-const VISIBLE_SECTIONS = desktop ? SECTIONS.filter((s) => s.id !== 'agents') : SECTIONS;
+// Sul desktop non c'è il server MCP né i token: gli agenti lavorano con il server cloud. Il
+// telecomando invece c'è solo lì: nel browser il telefono vede già lo schermo dallo stesso server.
+const VISIBLE_SECTIONS = SECTIONS.filter((s) => (desktop ? s.id !== 'agents' : s.id !== 'remote'));
 
 export function SettingsScreen({ section = 'decks', deckId }: { section?: SettingsSection; deckId?: number }) {
   const { settings, update } = useSettings();
@@ -177,6 +180,8 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
             ) : null}
 
             {section === 'agents' && !desktop ? <AgentsSection /> : null}
+
+            {section === 'remote' && desktop ? <RemoteBridgeSection /> : null}
 
             {section === 'account' && desktop ? (
               <Group title="Account">

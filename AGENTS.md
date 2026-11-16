@@ -161,6 +161,7 @@ e il suo «ok» sblocca i passi 3–6.
 
 **Desktop (`apps/desktop`, `PKGBUILD`)**
 - [x] App Electron con backend locale e copia locale della collezione, sync con AnkiWeb, pacchetto Arch `-git`
+- [x] Telecomando dal telefono tramite il server (ponte in uscita, token con scope `remote`)
 - [ ] Prima sync della copia locale con l'account AnkiWeb vero e prova offline
 
 **Immagine e deploy**

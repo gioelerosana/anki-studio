@@ -7,6 +7,7 @@ import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { DeckList } from '../components/DeckList';
+import { useRemoteDecks } from '../remote/RemoteScreenProvider';
 import { primeAudio } from '../study/audio';
 import { useSync } from '../sync/SyncProvider';
 
@@ -33,6 +34,9 @@ export function DecksScreen() {
   useEffect(() => {
     void load();
   }, [load, dataVersion]);
+
+  // il telefono (telecomando) vede gli stessi mazzi e conteggi di questa schermata
+  useRemoteDecks(decks);
 
   // I conteggi cambiano col giorno e con lo studio da altri dispositivi: si aggiornano al ritorno sull'app.
   useEffect(() => {
