@@ -7,6 +7,7 @@
 import { useState, type FormEvent } from 'react';
 import { Cloud, LogOut, Mail, Lock } from 'lucide-react';
 import { Banner, Button, Field, Input, Modal, Spinner } from '@anki-studio/ui-kit';
+import { desktop } from '../app/desktop';
 import { api, ApiError } from '../api/client';
 import type { SyncStatus } from '../api/types';
 import { formatRelative } from '../app/format';
@@ -170,7 +171,7 @@ export function SyncPanel({
               size="lg"
             />
           </Field>
-          <Field label="Password" hint="Non viene salvata: il server tiene solo la chiave di sessione di AnkiWeb.">
+          <Field label="Password" hint={`Non viene salvata: ${desktop ? 'questo computer' : 'il server'} tiene solo la chiave di sessione di AnkiWeb.`}>
             <Input
               type="password"
               autoComplete="current-password"

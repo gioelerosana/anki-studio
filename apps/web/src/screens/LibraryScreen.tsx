@@ -13,7 +13,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, ChevronLeft, FolderInput, History, Library, Plus, Search, Tag, Trash2, X } from 'lucide-react';
-import { Badge, Banner, Button, Checkbox, EmptyHint, HeaderBar, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
+import { Badge, Banner, Button, Checkbox, EmptyHint, IconButton, Input, Select, Spinner, cn } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api, ApiError } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, NoteSearchItem } from '../api/types';
@@ -317,7 +318,7 @@ export function LibraryScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title="Libreria"
         subtitle={!loading && !error ? plural(total, 'nota', 'note') : undefined}
         leftContent={

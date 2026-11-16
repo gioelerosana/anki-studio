@@ -27,7 +27,8 @@ import {
   Volume2,
   VolumeOff,
 } from 'lucide-react';
-import { Banner, Button, HeaderBar, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
+import { Banner, Button, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api, ApiError } from '../api/client';
 import { findDeck } from '../api/decks';
 import type { Rating, RemoteCommand, StudyState, TodayStats } from '../api/types';
@@ -310,7 +311,7 @@ export function StudyScreen({ deckId }: { deckId: number }) {
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title={deckName}
         leftContent={
           <Button variant="ghost" size="sm" icon={<ChevronLeft />} onClick={() => navigate({ name: 'decks' })} className="-ml-1.5 pl-1">

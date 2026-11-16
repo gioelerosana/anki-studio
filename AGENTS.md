@@ -31,6 +31,12 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
   - `app/web.py` — serve la build della PWA dallo stesso processo (`ANKI_WEB_DIR`): cache,
     fallback SPA, header. Sostituisce nginx: `/api/*` non passa mai di qui.
   - `requirements.lock` — dipendenze con hash per l'immagine e la CI (rigenerale con uv, vedi README).
+- `apps/desktop` — app desktop (Electron, l'`electron44` di sistema): avvia il backend su
+  127.0.0.1 con una copia locale della collezione (`~/.local/share/anki-studio`) e una chiave per
+  avvio (`ANKI_DESKTOP_KEY`, header `X-Anki-Desktop-Key`) al posto di Authentik; sync con AnkiWeb.
+  La PWA lo riconosce da `window.ankiDesktop` (`src/app/desktop.ts`).
+- `PKGBUILD` (root) e `packaging/arch/` — pacchetto Arch `anki-studio-git` dell'app desktop,
+  versione `r<numero di commit>.g<hash>` ([`packaging/arch/README.md`](packaging/arch/README.md)).
 - `Dockerfile` — **un'unica immagine** (PWA + API, un processo, utente 1000:1000, compatibile con
   `read_only`, healthcheck). Pubblicata su `ghcr.io/gioelerosana/anki-studio` da
   `.github/workflows/ci.yml` ai tag `vX.Y.Z`, per amd64 e arm64.
@@ -59,6 +65,8 @@ come XMap Studio risolve una cosa, guarda là e fai lo stesso.
 ```bash
 pnpm typecheck && pnpm build      # frontend
 pnpm test:api                     # backend (pytest)
+# se tocchi apps/desktop o il PKGBUILD: pnpm desktop (prova con ANKI_DATA_DIR di prova) e
+# ANKI_STUDIO_REF=HEAD makepkg (pacchetto del commit corrente, senza installarlo)
 # se tocchi Dockerfile, app/web.py, dipendenze o deploy (su myserv la build vuole --network host):
 docker build --network host -t anki-studio:local . && scripts/smoke-test-image.sh anki-studio:local
 ```
@@ -150,6 +158,10 @@ e il suo «ok» sblocca i passi 3–6.
 - [ ] Prima sync con l'account AnkiWeb vero (istruzioni in `backend/README.md`)
 - [ ] Caricamento di media dalla PWA (es. foto per una nota nuova)
 - [x] Modifica delle opzioni del mazzo dalla PWA (preset, limiti per mazzo e per oggi, passi, seppellimento: `PUT /api/decks/{id}/options`)
+
+**Desktop (`apps/desktop`, `PKGBUILD`)**
+- [x] App Electron con backend locale e copia locale della collezione, sync con AnkiWeb, pacchetto Arch `-git`
+- [ ] Prima sync della copia locale con l'account AnkiWeb vero e prova offline
 
 **Immagine e deploy**
 - [x] Immagine Docker unica (PWA servita da FastAPI), multi-arch, hardening, versione in `/api/health`

@@ -19,6 +19,18 @@ iPad (PWA) ──HTTPS──▶ Traefik ──▶ anki-studio (un container, un 
 | `.github/workflows/ci.yml` | CI su PR e push, pubblicazione su GHCR ai tag `vX.Y.Z` |
 | `deploy/stack` | Proposta di integrazione nello stack di myserv ([deploy/stack/README.md](deploy/stack/README.md)) |
 | `scripts/smoke-test-image.sh` | Avvio di prova di un'immagine con l'hardening di produzione |
+| `apps/desktop`, `PKGBUILD` | App desktop per Arch (Electron + backend locale, copia locale della collezione) ([packaging/arch/README.md](packaging/arch/README.md)) |
+
+## App desktop (Arch Linux)
+
+La stessa PWA in una finestra Electron, con il backend e il motore di Anki sul computer e una
+copia locale della collezione che si sincronizza con AnkiWeb (e quindi con il server):
+
+```bash
+makepkg -si      # dalla root: compila l'ultimo main, versione r<commit>.g<hash>
+```
+
+Tutto in [packaging/arch/README.md](packaging/arch/README.md).
 
 ## L'immagine Docker
 

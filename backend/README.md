@@ -66,6 +66,7 @@ Tutto da variabili d'ambiente (o `.env`), vedi [`.env.example`](../.env.example)
 | `ANKI_OIDC_ALLOWED_USERS` / `_GROUPS` | vuoti | Seconda barriera dopo le policy di Authentik: `preferred_username`/email o gruppi ammessi (virgole). Vuoti = decide Authentik |
 | `ANKI_SESSION_DAYS` | `30` | Durata della sessione della PWA; scaduta, la PWA rifà il login da sola |
 | `ANKI_DEV_LOGIN` | `false` | Solo sviluppo: login senza Authentik. Rifiutato insieme ad `ANKI_WEB_DIR` |
+| `ANKI_DESKTOP_KEY` | — | Solo l'app desktop (`apps/desktop`), che la genera a ogni avvio: accesso con l'header `X-Anki-Desktop-Key` al posto di Authentik. Rifiutata con `ANKI_OIDC_*` e `ANKI_DEV_LOGIN`; mai su un server |
 | `ANKI_MCP_ENABLED` | `true` | Server MCP su `/mcp` (e metadati OAuth). `false` = niente `/mcp` né `.well-known` (404) |
 | `ANKI_MCP_OIDC_ISSUER` | — | Issuer del SECONDO provider Authentik, quello per l'app Claude, es. `https://auth.jshep.xyz/application/o/anki-studio-mcp/` (solo `https`). Vuoto = niente OAuth su `/mcp`, restano i token Bearer |
 | `ANKI_MCP_OIDC_CLIENT_ID` | — | Client ID di quel provider: è il valore atteso nell'`aud` dei JWT (non l'URL della risorsa). Il backend **non** ha il client secret: lo usa Claude |

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Anki Studio
+Comment=Studia le tue flashcard Anki, anche offline
+Exec=anki-studio
+Icon=org.joel.anki_studio
+Terminal=false
+Categories=Education;
+Keywords=anki;flashcard;studio;
+StartupWMClass=org.joel.anki_studio

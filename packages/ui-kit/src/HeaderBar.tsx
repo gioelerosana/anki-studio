@@ -1,5 +1,6 @@
 /*
- * Barra superiore dell'app.
+ * Barra superiore dell'app (barra del titolo disegnata dall'app nel desktop Electron,
+ * normale nel browser e nella PWA).
  *
  * I gruppi di sinistra e destra non si restringono mai: il titolo sta nel
  * flusso, al centro, e si tronca. Così nessun pulsante si sovrappone a un
@@ -10,6 +11,7 @@
  */
 import type { ReactNode, Ref } from 'react';
 import { cn } from './utils.js';
+import { WindowControls, type WindowControlsProps } from './WindowControls.js';
 
 export interface HeaderBarProps {
   title?: ReactNode;
@@ -17,6 +19,8 @@ export interface HeaderBarProps {
   leftContent?: ReactNode;
   centerContent?: ReactNode;
   rightContent?: ReactNode;
+  showWindowControls?: boolean;
+  windowControlProps?: WindowControlsProps;
   className?: string;
   headerRef?: Ref<HTMLElement>;
 }
@@ -27,6 +31,8 @@ export function HeaderBar({
   leftContent,
   centerContent,
   rightContent,
+  showWindowControls = false,
+  windowControlProps,
   className,
   headerRef,
 }: HeaderBarProps) {
@@ -48,10 +54,11 @@ export function HeaderBar({
         {subtitle ? <span className="max-w-full truncate text-2xs text-muted-foreground">{subtitle}</span> : null}
       </div>
 
-      {/* Destra: switcher, azioni secondarie,  */}
+      {/* Destra: switcher, azioni secondarie, controlli finestra */}
       <div className="app-no-drag flex shrink-0 items-center gap-1.5">
         {centerContent}
         {rightContent}
+        {showWindowControls && <WindowControls {...windowControlProps} />}
       </div>
     </header>
   );

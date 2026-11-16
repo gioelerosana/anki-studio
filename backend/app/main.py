@@ -94,11 +94,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_secret(settings.anki_api_token)
     register_secret(settings.anki_oidc_client_secret)
     register_secret(settings.ankiweb_password)
+    register_secret(settings.anki_desktop_key)
     if settings.anki_dev_login and settings.anki_web_dir is not None:
         # il login di sviluppo apre la collezione a chiunque: mai insieme alla PWA servita
         # da qui (l'immagine Docker), cioè mai in un deploy
         raise RuntimeError("ANKI_DEV_LOGIN non è ammesso con ANKI_WEB_DIR (solo sviluppo)")
-    if not settings.oidc_enabled and not settings.anki_dev_login:
+    if settings.desktop_mode:
+        log.info("App desktop: accesso con la chiave dell'avvio, collezione locale")
+    elif not settings.oidc_enabled and not settings.anki_dev_login:
         log.warning("OIDC non configurato (ANKI_OIDC_*): la PWA non potrà accedere")
 
     @asynccontextmanager

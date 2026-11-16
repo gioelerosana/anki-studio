@@ -23,6 +23,7 @@ export * from './Card.js';
 export * from './EmptyHint.js';
 export * from './Tooltip.js';
 export * from './ViewSwitcher.js';
+export * from './WindowControls.js';
 export * from './HeaderBar.js';
 export * from './Toast.js';
 export * from './Modal.js';

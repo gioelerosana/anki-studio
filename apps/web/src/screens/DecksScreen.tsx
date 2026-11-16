@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Cloud, CloudAlert, CloudOff, Gamepad2, Layers, Library, Plus, Settings } from 'lucide-react';
-import { Banner, EmptyHint, HeaderBar, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
+import { Banner, EmptyHint, IconButton, Spinner, cn } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api, ApiError } from '../api/client';
 import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
@@ -46,7 +47,7 @@ export function DecksScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title="Mazzi"
         leftContent={
           <>

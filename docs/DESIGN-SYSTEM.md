@@ -154,7 +154,13 @@ in alto a destra sotto la barra, perché in basso ci sono i pulsanti di risposta
 ### `HeaderBar`
 Altezza `h-topbar` (+ safe area iPad), `bg-background`, `border-b`, regione
 trascinabile `app-drag-region`. Titolo centrato `text-sm font-medium`,
-sottotitolo `text-2xs text-muted-foreground`.
+sottotitolo `text-2xs text-muted-foreground`. Nell'app desktop è anche la barra del
+titolo (`showWindowControls`, `windowControlProps`): le schermate usano `AppHeaderBar`
+(`apps/web/src/app/AppHeaderBar.tsx`), che aggiunge i controlli solo lì.
+
+### `WindowControls`
+Come in XMap Studio. Tre bottoni ghost 28px (`size-7`, `rounded-control`), icone 14px
+`text-muted-foreground`; chiudi con hover `bg-error text-primary-foreground`.
 
 
 ### `Tooltip`

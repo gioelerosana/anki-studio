@@ -9,7 +9,9 @@
     "build": "pnpm --filter @anki-studio/web build",
     "typecheck": "pnpm -r typecheck",
     "dev:api": "cd backend && .venv/bin/uvicorn app.main:create_app --factory --reload --port 8000",
-    "test:api": "cd backend && .venv/bin/python -m pytest -q"
+    "test:api": "cd backend && .venv/bin/python -m pytest -q",
+    "build:desktop": "pnpm --filter @anki-studio/web build && pnpm --filter @anki-studio/desktop build",
+    "desktop": "pnpm build:desktop && electron44 apps/desktop"
   },
   "devDependencies": {
     "typescript": "^5.7.3"
