@@ -18,3 +18,8 @@ backend/data/
 # daemon ha "bridge": "none"): dipendono dalla macchina
 docker-compose.override.yml
 compose.override.yml
+
+# makepkg (PKGBUILD nella root): cartelle di lavoro e pacchetti prodotti
+/src/
+/pkg/
+*.pkg.tar.zst
