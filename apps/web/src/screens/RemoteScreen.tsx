@@ -7,7 +7,7 @@
  * (backend/app/remote.py). Nessun abbinamento: stesso account Authentik, stessa collezione.
  *
  * Pulsanti grandi e in basso, per il pollice, e schermo sempre acceso (Wake Lock) finché
- * il telecomando è aperto. Seppellisci, sospendi e flag stanno nel menu in alto: lontani
+ * il telecomando è aperto. Sospendi e flag stanno nel menu in alto: lontani
  * dal pollice, così non si sospende una carta per sbaglio (e c'è comunque «Annulla»).
  *
  * Se sul computer c'è l'elenco dei mazzi, il telefono lo mostra e ne apre uno lì; durante
@@ -18,7 +18,7 @@
  * sono quelli che lo schermo manda nel suo stato (la copia locale del desktop), non /api/decks.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeft, CircleCheck, EyeOff, Flag, Layers, Monitor, MoreHorizontal, Pause, Undo2, Volume2, VolumeOff } from 'lucide-react';
+import { ChevronLeft, CircleCheck, Flag, Layers, Monitor, MoreHorizontal, Pause, Undo2, Volume2, VolumeOff } from 'lucide-react';
 import { Banner, Button, EmptyHint, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
 import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api } from '../api/client';
@@ -120,18 +120,17 @@ export function RemoteScreen() {
   const sourceLabel = screen ? SOURCE_LABEL[screen.source ?? 'browser'] : '';
   const subtitle = study ? deckLabel : screen?.view === 'decks' ? 'Scegli il mazzo' : undefined;
 
-  const cardAction = (action: 'bury' | 'suspend') => {
+  const suspendCard = () => {
     if (!card) return;
-    press({ action, card_id: card.card_id });
-    toast('success', action === 'bury' ? 'Carta seppellita fino a domani' : 'Carta sospesa: «Annulla» la riporta');
+    press({ action: 'suspend', card_id: card.card_id });
+    toast('success', 'Carta sospesa: «Annulla» la riporta');
   };
   const changeDeck = () => press({ action: 'close' });
   const menuItems: MenuItem[] = [
     ...(card
       ? [
           { id: 'flag', label: 'Flag…', icon: <Flag />, onSelect: () => setFlagging(true) },
-          { id: 'bury', label: 'Seppellisci', icon: <EyeOff />, separatorBefore: true, onSelect: () => cardAction('bury') },
-          { id: 'suspend', label: 'Sospendi', icon: <Pause />, onSelect: () => cardAction('suspend') },
+          { id: 'suspend', label: 'Sospendi', icon: <Pause />, separatorBefore: true, onSelect: suspendCard },
         ]
       : []),
     { id: 'decks', label: 'Cambia mazzo', icon: <Layers />, separatorBefore: !!card, onSelect: changeDeck },
