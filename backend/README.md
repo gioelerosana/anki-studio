@@ -331,6 +331,7 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | POST | `/api/notes/tags` | `{note_ids, add, remove}`: tag in blocco → `{updated}`; 422 se toccano `agent::`, `ext::` |
 | GET/POST/PATCH/DELETE | `/api/tokens[/{id}]` | Token per gli agenti: elenco · crea (token in chiaro **solo qui**) · `scope` · revoca |
 | WS | `/api/remote?role=screen&screen_id=…` · `?role=remote` | Telecomando: lo studio aperto (`screen`) e il telefono (`remote`), vedi sotto |
+| GET/PUT/DELETE | `/api/desktop/remote-bridge` | **Solo app desktop** (chiave `X-Anki-Desktop-Key`, mai un Bearer): stato del ponte del telecomando (`RemoteBridgeStatus`, il token non torna mai: solo `token_set`) · `{server_url, token?, enabled}` collega o scollega subito (`token` assente = tieni quello salvato; 400 su URL non https o token non `ask_…`) · scollega e cancella il token |
 
 Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **403** modifica da un'altra origine, **429** troppi tentativi (`Retry-After`),
 **503** collezione occupata da una sync (`Retry-After`), **502** AnkiWeb non raggiungibile.
@@ -369,7 +370,22 @@ Codici comuni: **401** sessione mancante o scaduta (la PWA rifà il login), **40
   può aprire un mazzo), `study`, `other` (aggiungi, impostazioni: il telefono non la cambia). Il server inoltra soltanto, in memoria: lo
   studio vero resta nella schermata, che esegue il comando solo se `card_id` è ancora la carta
   mostrata. Con più schermate aperte comanda quella in primo piano per ultima (`claim`).
-  Niente abbinamento: stesso account, stessa collezione.
+  Niente abbinamento: stesso account, stessa collezione. Nello stato `source` (`browser` |
+  `desktop`) dice da dove studia lo schermo (sottotitolo del telefono) e, con `view == "decks"`,
+  `decks` porta l'albero compatto dei mazzi (`id`, `name`, `counts`, `children`; massimo 2000 mazzi
+  e 32 livelli, oltre è un messaggio non valido): il telefono lo preferisce a `/api/decks`. Uno
+  schermo può mandare `"state": null` (niente da comandare). Dal telefono il server accetta anche
+  un Bearer: `ANKI_API_TOKEN` per entrambi i ruoli, un token `remote` **solo** come `screen`.
+- **Ponte del telecomando** (`app/remote_bridge.py`, solo app desktop): il telefono apre il server,
+  l'app desktop ha un backend locale; il backend del desktop apre un WebSocket **in uscita** verso
+  `wss://<server>/api/remote?role=screen&screen_id=desktop-…` con `Authorization: Bearer <token remote>`
+  e ci fa passare lo stato dello schermo attivo locale (con `claim` e `source: "desktop"`), mentre
+  consegna alla schermata locale i `command` del telefono e il numero di telefoni (`remotes`). La sync
+  non c'entra: resta quella di Anki con AnkiWeb, il relay inoltra soltanto. Configurazione in
+  `data/remote_bridge.json` (0600: URL, token, `enabled`, `screen_id` stabile per installazione così una
+  riconnessione sostituisce la vecchia). Si ricollega da solo (1 s → 30 s con jitter; 5 minuti dopo un
+  401/403, perché i Bearer sbagliati contano nel limite ai tentativi del server); senza rete il desktop
+  funziona come sempre. Il token non va mai nei log. Lato server non serve nessuna variabile nuova.
 
 ## Agenti, diario e token
 
@@ -387,21 +403,25 @@ libreria di Anki).
 
 **Token.** `ask_` + 32 byte casuali. Sul disco (`data/tokens.json`, 0600, scrittura atomica) resta
 solo l'hash SHA-256: il chiaro si vede una volta sola, nella risposta di `POST /api/tokens`, e non si
-recupera. Ogni token ha `scope` (`read` | `write`) e `last_used_at`.
+recupera. Ogni token ha `scope` (`read` | `write` | `remote`) e `last_used_at`. `remote` («Solo
+telecomando») non è un agente: serve al ponte dell'app desktop, apre `/api/remote` solo come `screen` e
+riceve 403 su ogni rotta REST e su `/mcp` (anche `tools/list`).
 Il nome diventa lo slug del tag di provenienza `agent::<slug>` (`a-z0-9-`), quindi è unico e non si
 cambia. I Bearer sbagliati contano nel limite per IP di `ANKI_API_TOKEN` (429, solo per chi manda un Bearer: vedi "Sicurezza"); uno revocato risponde 401 senza contare. Se `tokens.json` non si legge (JSON rovinato, forma sbagliata) non viene sovrascritto: si rinomina in `tokens.json.bak-<data>` (0600), con un warning senza contenuti, e si riparte senza token; i campi sconosciuti nei token (file di una versione più nuova) si ignorano.
 
 **Chi può cosa** (un solo controllo in `security.token_may`, deny-by-default: una rotta nuova è
 vietata ai token con scope finché non la si elenca lì):
 
-| | sessione e `ANKI_API_TOKEN` | token `write` | token `read` |
-|---|---|---|---|
-| `GET` decks, notetypes, search/notes, tags, notes/{id}, cards/{id}/preview, sync | sì | sì | sì |
-| `GET` hub/operations | tutte le operazioni | solo le proprie | solo le proprie |
-| `POST` hub/notes/batch, hub/decks, sync, media | sì | sì | 403 |
-| `POST` hub/operations/{id}/undo | qualsiasi operazione | **solo le proprie** (le altre: 404) | 403 |
-| `PATCH` notes/{id} | sì (ma non i tag riservati: 422) | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 |
-| move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me`, telecomando | sì | 403 | 403 |
+| | sessione e `ANKI_API_TOKEN` | token `write` | token `read` | token `remote` |
+|---|---|---|---|---|
+| `GET` decks, notetypes, search/notes, tags, notes/{id}, cards/{id}/preview, sync | sì | sì | sì | 403 |
+| `GET` hub/operations | tutte le operazioni | solo le proprie | solo le proprie | 403 |
+| `POST` hub/notes/batch, hub/decks, sync, media | sì | sì | 403 | 403 |
+| `POST` hub/operations/{id}/undo | qualsiasi operazione | **solo le proprie** (le altre: 404) | 403 | 403 |
+| `PATCH` notes/{id} | sì (ma non i tag riservati: 422) | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 | 403 |
+| move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me` | sì | 403 | 403 | 403 |
+| WS `/api/remote` | `screen` e `remote` | no | no | **solo `screen`** |
+| `/mcp` | sì (`ANKI_API_TOKEN`) | sì | sì | 403 |
 
 Un token con scope risponde 403 con "Questo token non può fare questa operazione".
 
