@@ -10,7 +10,6 @@ import { Bot, ChevronLeft, ChevronRight, Cloud, Info, Keyboard, Layers, LogOut, 
 import {
   Banner,
   Button,
-  HeaderBar,
   Kbd,
   KbdGroup,
   Modal,
@@ -19,6 +18,7 @@ import {
   Switch,
   cn,
 } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, TodayStats } from '../api/types';
@@ -91,7 +91,7 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title="Impostazioni"
         leftContent={
           <Button variant="ghost" size="sm" icon={<ChevronLeft />} onClick={() => navigate({ name: 'decks' })} className="-ml-1.5 pl-1">

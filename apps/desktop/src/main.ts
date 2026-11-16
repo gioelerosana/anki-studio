@@ -92,6 +92,18 @@ async function start(): Promise<void> {
   ipcMain.on('desktop:info', (event) => {
     event.returnValue = { version: build.version, revision: build.revision, dataDir };
   });
+  // Controlli della barra del titolo disegnata dall'app, sulla finestra che li manda
+  const sender = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
+    BrowserWindow.fromWebContents(event.sender);
+  ipcMain.on('window:minimize', (event) => sender(event)?.minimize());
+  ipcMain.on('window:maximize', (event) => {
+    const w = sender(event);
+    if (!w) return;
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  });
+  ipcMain.on('window:close', (event) => sender(event)?.close());
+  ipcMain.handle('window:isMaximized', (event) => sender(event)?.isMaximized() ?? false);
 
   const logPath = path.join(dataDir, 'desktop.log');
   try {
@@ -238,6 +250,9 @@ function createWindow(): void {
     minWidth: 420,
     minHeight: 520,
     title: 'Anki Studio',
+    // Barra del titolo disegnata dalla PWA (HeaderBar + WindowControls), come XMap Studio:
+    // quella di sistema su GNOME è in stile GTK3 e non c'entra con l'app.
+    frame: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND,
     autoHideMenuBar: true,
     show: false,
@@ -252,6 +267,8 @@ function createWindow(): void {
   window.on('closed', () => {
     window = null;
   });
+  window.on('maximize', () => window?.webContents.send('window:maximizedChanged', true));
+  window.on('unmaximize', () => window?.webContents.send('window:maximizedChanged', false));
 
   // I link delle carte e di AnkiWeb si aprono nel browser di sistema, mai qui dentro:
   // una pagina esterna in questa finestra non deve stare accanto alla chiave.

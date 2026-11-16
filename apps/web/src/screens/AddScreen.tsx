@@ -7,7 +7,8 @@
  */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ChevronLeft, Plus } from 'lucide-react';
-import { Banner, Button, Field, HeaderBar, Select, Spinner } from '@anki-studio/ui-kit';
+import { Banner, Button, Field, Select, Spinner } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api } from '../api/client';
 import { flattenDecks } from '../api/decks';
 import type { DeckNode, Notetype } from '../api/types';
@@ -95,7 +96,7 @@ export function AddScreen({ deckId }: { deckId: number | null }) {
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title="Aggiungi carta"
         leftContent={
           <Button variant="ghost" size="sm" icon={<ChevronLeft />} onClick={back} className="-ml-1.5 pl-1">

@@ -15,7 +15,8 @@
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, CircleCheck, EyeOff, Flag, Layers, Monitor, MoreHorizontal, Pause, Undo2, Volume2, VolumeOff } from 'lucide-react';
-import { Banner, Button, EmptyHint, HeaderBar, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
+import { Banner, Button, EmptyHint, IconButton, Menu, Spinner, cn, type MenuItem } from '@anki-studio/ui-kit';
+import { AppHeaderBar } from '../app/AppHeaderBar';
 import { api } from '../api/client';
 import type { DeckNode, Rating, RemoteCommand, RemoteScreenState } from '../api/types';
 import { navigate } from '../app/route';
@@ -125,7 +126,7 @@ export function RemoteScreen() {
 
   return (
     <div className="flex h-full flex-col">
-      <HeaderBar
+      <AppHeaderBar
         title="Telecomando"
         subtitle={study ? deckLabel : screen?.view === 'decks' ? 'Scegli il mazzo' : undefined}
         leftContent={

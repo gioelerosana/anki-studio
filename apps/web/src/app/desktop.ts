@@ -9,6 +9,13 @@ export interface DesktopInfo {
   revision: string;
   /** Cartella della collezione locale, es. ~/.local/share/anki-studio. */
   dataDir: string;
+  /** Comandi per la barra del titolo, che nel desktop disegna la PWA (AppHeaderBar). */
+  minimize: () => void;
+  maximize: () => void;
+  close: () => void;
+  isMaximized: () => Promise<boolean>;
+  /** Restituisce la funzione per smettere di ascoltare. */
+  onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
 }
 
 declare global {
