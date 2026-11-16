@@ -20,6 +20,8 @@ import type {
   NoteSearchResult,
   OperationList,
   NoteTagsResult,
+  RemoteBridgeInput,
+  RemoteBridgeStatus,
   Stats,
   Note,
   Notetype,
@@ -158,4 +160,10 @@ export const api = {
   updateToken: (id: string, patch: { scope?: TokenScope }) =>
     request<ApiToken>('PATCH', `/tokens/${id}`, patch),
   deleteToken: (id: string) => request<void>('DELETE', `/tokens/${id}`),
+
+  /** Ponte del telecomando: solo nell'app desktop (la chiave la aggiunge Electron). */
+  remoteBridge: () => request<RemoteBridgeStatus>('GET', '/desktop/remote-bridge'),
+  configureRemoteBridge: (input: RemoteBridgeInput) =>
+    request<RemoteBridgeStatus>('PUT', '/desktop/remote-bridge', input),
+  forgetRemoteBridge: () => request<RemoteBridgeStatus>('DELETE', '/desktop/remote-bridge'),
 };

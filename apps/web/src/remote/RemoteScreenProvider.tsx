@@ -7,6 +7,11 @@
  * schermate (aggiungi, impostazioni) il telefono non cambia niente: si perderebbe la nota
  * che si sta scrivendo.
  *
+ * Sull'elenco dei mazzi lo stato porta anche i mazzi (`decks`, da DecksScreen con
+ * `useRemoteDecks`): il telefono li mostra così come li vede lo schermo. Serve soprattutto
+ * all'app desktop, che ha una copia locale della collezione e arriva al telefono attraverso il
+ * server (backend/app/remote_bridge.py): /api/decks del server può avere conteggi vecchi.
+ *
  * Nessun abbinamento: basta avere l'app aperta con lo stesso account. Con più schermi
  * (computer e iPad) il telefono comanda quello in primo piano per ultimo: lo stato si
  * "rivendica" (`claim`) solo a pagina visibile, e di nuovo quando torna visibile o
@@ -21,19 +26,21 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { RemoteCommand, RemoteScreenState } from '../api/types';
+import type { DeckNode, RemoteCommand, RemoteDeck, RemoteScreenState } from '../api/types';
+import { desktop } from '../app/desktop';
 import { navigate, type Route } from '../app/route';
 import { useToast } from '../app/toasts';
 import { useRemoteSocket } from './useRemoteSocket';
 
 /** Lo stato di studio come lo pubblica StudyScreen (la vista la aggiunge il provider). */
-export type RemoteStudyState = Omit<RemoteScreenState, 'view'>;
+export type RemoteStudyState = Omit<RemoteScreenState, 'view' | 'source' | 'decks'>;
 type CommandHandler = (command: RemoteCommand) => void;
 
 interface RemoteScreenContext {
   /** Telefoni collegati come telecomando. */
   remotes: number;
   setStudy: (state: RemoteStudyState | null) => void;
+  setDecks: (decks: RemoteDeck[] | null) => void;
   handler: { current: CommandHandler | null };
 }
 
@@ -45,7 +52,23 @@ function newScreenId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const EMPTY: Omit<RemoteScreenState, 'view'> = {
+const SOURCE: RemoteScreenState['source'] = desktop ? 'desktop' : 'browser';
+/** Lo stesso tetto del backend (REMOTE_MAX_DECKS): oltre, il telefono usa /api/decks. */
+const MAX_DECKS = 2000;
+
+/** L'albero dei mazzi ridotto a ciò che serve al telefono; null se è troppo grande. */
+export function compactDecks(nodes: DeckNode[]): RemoteDeck[] | null {
+  let count = 0;
+  const walk = (list: DeckNode[]): RemoteDeck[] =>
+    list.map((n) => {
+      count += 1;
+      return { id: n.id, name: n.name, counts: n.counts, children: walk(n.children) };
+    });
+  const tree = walk(nodes);
+  return count > MAX_DECKS ? null : tree;
+}
+
+const EMPTY: RemoteStudyState = {
   deck_id: null,
   deck_name: '',
   done: false,
@@ -68,6 +91,7 @@ export function RemoteScreenProvider({ route, children }: { route: Route; childr
   const toast = useToast();
   const [remotes, setRemotes] = useState(0);
   const [study, setStudy] = useState<RemoteStudyState | null>(null);
+  const [decks, setDecks] = useState<RemoteDeck[] | null>(null);
   const [screenId] = useState(newScreenId);
   const handler = useRef<CommandHandler | null>(null);
   const lastSent = useRef('');
@@ -75,10 +99,12 @@ export function RemoteScreenProvider({ route, children }: { route: Route; childr
   const state = useMemo<RemoteScreenState>(() => {
     if (route.name === 'study') {
       // passando da un mazzo all'altro, lo stato del mazzo vecchio non vale più
-      return study && study.deck_id === route.deckId ? { view: 'study', ...study } : { view: 'study', ...EMPTY, deck_id: route.deckId };
+      const base = study && study.deck_id === route.deckId ? study : { ...EMPTY, deck_id: route.deckId };
+      return { view: 'study', ...base, source: SOURCE };
     }
-    return { view: route.name === 'decks' ? 'decks' : 'other', ...EMPTY };
-  }, [route, study]);
+    if (route.name === 'decks') return { view: 'decks', ...EMPTY, source: SOURCE, decks };
+    return { view: 'other', ...EMPTY, source: SOURCE };
+  }, [route, study, decks]);
 
   const latest = useRef({ state, route });
   latest.current = { state, route };
@@ -147,7 +173,7 @@ export function RemoteScreenProvider({ route, children }: { route: Route; childr
     }
   }, [remotes, toast]);
 
-  const value = useMemo(() => ({ remotes, setStudy, handler }), [remotes]);
+  const value = useMemo(() => ({ remotes, setStudy, setDecks, handler }), [remotes]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
@@ -171,4 +197,12 @@ export function useRemoteStudy(state: RemoteStudyState | null, onCommand: Comman
     };
   }, [handler, onCommand]);
   return ctx?.remotes ?? 0;
+}
+
+/** Per DecksScreen: i mazzi mostrati, da mandare al telefono insieme allo stato. */
+export function useRemoteDecks(decks: DeckNode[] | null) {
+  const setDecks = useContext(Context)?.setDecks;
+  useEffect(() => {
+    setDecks?.(decks ? compactDecks(decks) : null);
+  }, [setDecks, decks]);
 }

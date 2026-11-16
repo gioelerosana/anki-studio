@@ -88,6 +88,21 @@ export interface RemoteScreenState {
   can_undo: boolean;
   /** Una risposta è in viaggio verso il backend. */
   busy: boolean;
+  /** Da dove studia lo schermo: la PWA in un browser o l'app desktop (attraverso il ponte). */
+  source?: 'browser' | 'desktop';
+  /**
+   * Solo con `view == 'decks'`: i mazzi come li vede lo schermo (al massimo 2000). Il telefono
+   * li preferisce a /api/decks del server, che per l'app desktop può essere indietro.
+   */
+  decks?: RemoteDeck[] | null;
+}
+
+/** Un mazzo nello stato dello schermo: `name` è l'ultimo pezzo del nome, come DeckNode.name. */
+export interface RemoteDeck {
+  id: number;
+  name: string;
+  counts: Counts;
+  children: RemoteDeck[];
 }
 
 /** Un tasto premuto sul telefono. `card_id`: lo schermo lo esegue solo se la carta è ancora quella. */
@@ -386,7 +401,8 @@ export interface CardPreview {
   suspended: boolean;
 }
 
-export type TokenScope = 'read' | 'write';
+/** `remote`: solo il telecomando, come schermo (l'app desktop attraverso il ponte); niente REST né /mcp. */
+export type TokenScope = 'read' | 'write' | 'remote';
 
 export interface ApiToken {
   id: string;
@@ -413,4 +429,28 @@ export interface MediaUpload {
 export interface MediaUploadResult {
   /** Nome da usare nei campi: `<img src="…">` o `[sound:…]`. */
   filename: string;
+}
+
+/* ---- ponte del telecomando (solo app desktop, backend/app/remote_bridge.py) ---- */
+
+/** Stato del ponte. Il token non torna mai indietro: solo `token_set`. */
+export interface RemoteBridgeStatus {
+  server_url: string | null;
+  token_set: boolean;
+  enabled: boolean;
+  /** `retrying`: caduto o rifiutato, riprova da solo (vedi `last_error` e `retry_at`). */
+  status: 'off' | 'connecting' | 'connected' | 'retrying';
+  last_error: string | null;
+  /** Secondi epoch. */
+  connected_at: number | null;
+  retry_at: number | null;
+  /** Telefoni collegati al server come telecomando. */
+  remotes: number;
+}
+
+export interface RemoteBridgeInput {
+  server_url: string;
+  /** null/assente = tieni quello salvato. */
+  token?: string | null;
+  enabled: boolean;
 }
