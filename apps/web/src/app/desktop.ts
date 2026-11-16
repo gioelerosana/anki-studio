@@ -16,6 +16,12 @@ export interface DesktopInfo {
   isMaximized: () => Promise<boolean>;
   /** Restituisce la funzione per smettere di ascoltare. */
   onMaximizedChange: (callback: (maximized: boolean) => void) => () => void;
+  /** Zoom della finestra (1 = 100%), salvato dal processo principale tra un avvio e l'altro. */
+  getZoom: () => Promise<number>;
+  /** Restituisce il valore applicato, già riportato nei limiti (50–300%). */
+  setZoom: (factor: number) => Promise<number>;
+  /** Anche le scorciatoie (Ctrl +/−/0, Ctrl + rotella) cambiano lo zoom. */
+  onZoomChange: (callback: (factor: number) => void) => () => void;
 }
 
 declare global {

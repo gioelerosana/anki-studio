@@ -1,7 +1,7 @@
 /*
  * Ponte minimo verso la PWA: le dice che gira nell'app desktop (niente «Esci» da
  * Authentik, dove stanno i dati, quale build è installata) e dà i comandi della finestra
- * alla barra del titolo che disegna lei. Nessuna API di Node.
+ * alla barra del titolo che disegna lei, più lo zoom per le impostazioni. Nessuna API di Node.
  */
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('window:maximizedChanged', handler);
       return () => {
         ipcRenderer.removeListener('window:maximizedChanged', handler);
+      };
+    },
+    getZoom: () => ipcRenderer.invoke('zoom:get') as Promise<number>,
+    setZoom: (factor: number) => ipcRenderer.invoke('zoom:set', factor) as Promise<number>,
+    onZoomChange: (callback: (factor: number) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, factor: number) => callback(factor);
+      ipcRenderer.on('zoom:changed', handler);
+      return () => {
+        ipcRenderer.removeListener('zoom:changed', handler);
       };
     },
   }),

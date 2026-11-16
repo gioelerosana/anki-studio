@@ -29,6 +29,7 @@ import { navigate, type SettingsSection } from '../app/route';
 import { AgentsSection } from '../agents/AgentsSection';
 import { RemoteBridgeSection } from '../remote/RemoteBridgeSection';
 import { Group, Row } from '../components/SettingsParts';
+import { ZoomSetting } from '../components/ZoomSetting';
 import { DeckOptionsPanel } from '../decks/DeckOptionsPanel';
 import { useSettings, type ThemePreference } from '../settings';
 import { useSync } from '../sync/SyncProvider';
@@ -51,6 +52,13 @@ const SHORTCUTS: { keys: string[]; action: string }[] = [
   { keys: ['Ctrl', '1–7'], action: 'Flag' },
   { keys: ['Esc'], action: 'Torna ai mazzi' },
   { keys: ['⌘', 'Invio'], action: 'Aggiungi (in «Aggiungi carta»)' },
+];
+
+// Nel browser lo zoom è quello di sistema; nell'app desktop lo gestisce Electron (ZoomSetting).
+const DESKTOP_SHORTCUTS: { keys: string[]; action: string }[] = [
+  { keys: ['Ctrl', '+'], action: 'Aumenta lo zoom' },
+  { keys: ['Ctrl', '−'], action: 'Riduci lo zoom' },
+  { keys: ['Ctrl', '0'], action: 'Zoom al 100%' },
 ];
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
@@ -154,6 +162,7 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
                 <Row label="Riduci animazioni" hint="Niente dissolvenze tra una carta e l’altra.">
                   <Switch checked={settings.reduceMotion} onCheckedChange={(reduceMotion) => update({ reduceMotion })} aria-label="Riduci animazioni" />
                 </Row>
+                {desktop ? <ZoomSetting desktop={desktop} /> : null}
               </Group>
             ) : null}
 
@@ -204,7 +213,7 @@ export function SettingsScreen({ section = 'decks', deckId }: { section?: Settin
             {section === 'shortcuts' ? (
               <Group title="Tastiera">
                 <ul className="divide-y">
-                  {SHORTCUTS.map((s) => (
+                  {(desktop ? [...SHORTCUTS, ...DESKTOP_SHORTCUTS] : SHORTCUTS).map((s) => (
                     <li key={s.action} className="flex items-center justify-between gap-4 px-4 py-2 text-sm">
                       <span className="text-muted-foreground">{s.action}</span>
                       <KbdGroup>
