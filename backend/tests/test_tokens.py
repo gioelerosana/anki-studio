@@ -285,8 +285,10 @@ def test_a_token_that_never_existed_counts_even_if_it_looks_like_a_revoked_one(o
     # un hash revocato è di un token vero: uno inventato non lo è
     old = create_token(owner)
     owner.delete(f"/api/tokens/{old['id']}")
+    # l'ultimo carattere cambia sempre: se il token finisse già con "A" sarebbe quello revocato
+    fake = old["token"][:-1] + ("B" if old["token"][-1] == "A" else "A")
     for _ in range(3):
-        assert owner.get("/api/decks", headers=bearer(old["token"][:-1] + "A")).status_code == 401
+        assert owner.get("/api/decks", headers=bearer(fake)).status_code == 401
     assert owner.get("/api/decks", headers=bearer(old["token"])).status_code == 429
 
 
