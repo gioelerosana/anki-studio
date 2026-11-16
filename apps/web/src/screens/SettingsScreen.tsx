@@ -47,7 +47,6 @@ const SHORTCUTS: { keys: string[]; action: string }[] = [
   { keys: ['R'], action: 'Riproduci audio' },
   { keys: ['E'], action: 'Modifica nota' },
   { keys: ['A'], action: 'Aggiungi carta' },
-  { keys: ['-'], action: 'Seppellisci' },
   { keys: ['@'], action: 'Sospendi' },
   { keys: ['Ctrl', '1–7'], action: 'Flag' },
   { keys: ['Esc'], action: 'Torna ai mazzi' },

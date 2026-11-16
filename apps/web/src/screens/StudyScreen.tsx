@@ -7,7 +7,7 @@
  *
  * Tocco: tap sulla carta = mostra risposta; quattro pulsanti in basso per i
  * pollici. Tastiera (Magic Keyboard): Spazio/Invio, 1–4, Z annulla, R audio,
- * E modifica, A aggiungi, - seppellisci, @ sospendi, Ctrl+1–7 flag, Esc torna ai mazzi.
+ * E modifica, A aggiungi, @ sospendi, Ctrl+1–7 flag, Esc torna ai mazzi.
  *
  * Telecomando: la stessa sessione si comanda dal telefono (RemoteScreen). I tasti del
  * telefono arrivano qui e passano dalle stesse funzioni della tastiera.
@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   CircleCheck,
-  EyeOff,
   Flag,
   MoreHorizontal,
   Pause,
@@ -166,13 +165,13 @@ export function StudyScreen({ deckId }: { deckId: number }) {
   }, [busy, deckId, toast]);
 
   const cardAction = useCallback(
-    async (kind: 'bury' | 'suspend') => {
+    async (kind: 'suspend') => {
       if (!card || busy) return;
       setBusy(true);
       stopAv();
       try {
-        await (kind === 'bury' ? api.bury(card.card_id) : api.suspend(card.card_id));
-        toast('success', kind === 'bury' ? 'Carta seppellita fino a domani' : 'Carta sospesa');
+        await api.suspend(card.card_id);
+        toast('success', 'Carta sospesa');
         await load();
       } catch (err) {
         toast('error', err instanceof Error ? err.message : 'Azione non riuscita');
@@ -248,7 +247,6 @@ export function StudyScreen({ deckId }: { deckId: number }) {
       } else if (e.key === 'r' || e.key === 'R') k.replay();
       else if (e.key === 'e' || e.key === 'E') setEditing(k.card.note_id);
       else if (e.key === 'a' || e.key === 'A') navigate({ name: 'add', deckId });
-      else if (e.key === '-') void k.cardAction('bury');
       else if (e.key === '@') void k.cardAction('suspend');
     };
     window.addEventListener('keydown', onKeyDown);
@@ -293,7 +291,7 @@ export function StudyScreen({ deckId }: { deckId: number }) {
     else if (command.action === 'answer' && sameCard && k.revealed && command.rating) void k.answer(command.rating);
     else if (command.action === 'undo') void k.undo();
     else if (command.action === 'replay') k.replay();
-    else if ((command.action === 'bury' || command.action === 'suspend') && sameCard) void k.cardAction(command.action);
+    else if (command.action === 'suspend' && sameCard) void k.cardAction('suspend');
     else if (command.action === 'flag' && sameCard && command.flag != null) void k.setFlag(command.flag);
   }, []);
   const remotes = useRemoteStudy(remoteState, onRemoteCommand);
@@ -304,8 +302,7 @@ export function StudyScreen({ deckId }: { deckId: number }) {
         { id: 'add', label: 'Aggiungi carta', icon: <Plus />, shortcut: 'A', onSelect: () => navigate({ name: 'add', deckId }) },
         { id: 'flag', label: 'Flag…', icon: <Flag />, shortcut: 'Ctrl+1', onSelect: () => setFlagging(true) },
         ...(hasAudio ? [{ id: 'replay', label: 'Riproduci audio', icon: <Volume2 />, shortcut: 'R', onSelect: replay }] : []),
-        { id: 'bury', label: 'Seppellisci', icon: <EyeOff />, shortcut: '-', separatorBefore: true, onSelect: () => void cardAction('bury') },
-        { id: 'suspend', label: 'Sospendi', icon: <Pause />, shortcut: '@', onSelect: () => void cardAction('suspend') },
+        { id: 'suspend', label: 'Sospendi', icon: <Pause />, shortcut: '@', separatorBefore: true, onSelect: () => void cardAction('suspend') },
       ]
     : [];
 
