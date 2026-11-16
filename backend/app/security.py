@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 SESSION_COOKIE = "anki_studio_session"
 # stato del login in corso (state, nonce, PKCE): vive pochi minuti, solo su /api/auth
 LOGIN_COOKIE = "anki_studio_login"
+# la chiave dell'app desktop (ANKI_DESKTOP_KEY), che Electron aggiunge a ogni richiesta
+DESKTOP_HEADER = "x-anki-desktop-key"
+DESKTOP_NAME = "Questo computer"
 
 
 class RateLimiter:
@@ -139,7 +142,7 @@ def session_key(settings: Settings) -> bytes:
         return hmac.new(
             settings.anki_oidc_client_secret.encode(), b"anki-studio-session-v1", hashlib.sha256
         ).digest()
-    # solo sviluppo (ANKI_DEV_LOGIN): sessioni valide finché gira il processo
+    # desktop e sviluppo (ANKI_DEV_LOGIN): sessioni valide finché gira il processo
     return secrets.token_bytes(32)
 
 
@@ -185,7 +188,7 @@ def check_bearer_blocked(request: HTTPConnection) -> None:
     anche con la credenziale giusta (altrimenti chi indovina se ne accorgerebbe). Chi non manda
     un Bearer, cioè la PWA con il cookie di sessione, non indovina niente e non si ferma: un
     agente che ritenta in loop da un IP non deve chiudere fuori il proprietario."""
-    if _bearer(request) is None:
+    if _bearer(request) is None and request.headers.get(DESKTOP_HEADER) is None:
         return
     retry = request.app.state.bearer_limiter.retry_after(client_key(request))
     if retry:
@@ -205,6 +208,18 @@ def is_revoked_bearer(request: HTTPConnection, token: str) -> bool:
         return False
     store: TokenStore = request.app.state.tokens
     return store.is_revoked(token)
+
+
+def desktop_identity(request: HTTPConnection, settings: Settings) -> Identity | None:
+    """L'app desktop: la chiave dell'avvio nell'header. Una chiave sbagliata è un 401, come un
+    Bearer sbagliato (e conta per lo stesso limite ai tentativi); senza header, None."""
+    sent = request.headers.get(DESKTOP_HEADER)
+    if sent is None or not settings.anki_desktop_key:
+        return None
+    if not secrets.compare_digest(sent.encode(), settings.anki_desktop_key.encode()):
+        record_bearer_failure(request, "Chiave del desktop")
+        raise _unauthorized()
+    return Identity(kind="session", name=DESKTOP_NAME)
 
 
 def _unauthorized() -> HTTPException:
@@ -372,9 +387,12 @@ def require_auth(request: Request, settings: Settings = Depends(get_settings)) -
             raise _forbidden_for_token()
         request.state.identity = identity
         return identity
-    session = read_session(request)
+    desktop = desktop_identity(request, settings)
+    session = read_session(request) if desktop is None else {"name": desktop.name}
     if session is None:
         raise _unauthorized()
+    # anche per il desktop: la chiave la aggiunge Electron a ogni richiesta verso l'API, pure a
+    # quelle che una pagina esterna aperta nella finestra facesse partire
     if request.method not in _SAFE_METHODS and not _same_origin(request, settings):
         log.warning(
             "Richiesta da un'altra origine rifiutata",
@@ -406,7 +424,11 @@ def websocket_session(websocket: HTTPConnection, settings: Settings) -> Identity
     if token is not None:
         identity = _identify_bearer(websocket, token, settings)
         return identity if identity is not None and identity.kind == "admin" else None
-    session = read_session(websocket)
+    try:
+        desktop = desktop_identity(websocket, settings)
+    except HTTPException:
+        return None
+    session = read_session(websocket) if desktop is None else {"name": desktop.name}
     if session is None:
         return None
     if not _same_origin(websocket, settings):

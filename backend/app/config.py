@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # Client ID del provider: è il valore atteso nell'`aud` dei JWT (non l'URL della risorsa)
     anki_mcp_oidc_client_id: str | None = None
 
+    # ---- app desktop (apps/desktop) ---------------------------------------------------
+    # L'app Electron avvia questo processo su 127.0.0.1 con una copia locale della collezione
+    # e una chiave casuale nuova a ogni avvio, che aggiunge da sé a ogni richiesta della sua
+    # finestra (header X-Anki-Desktop-Key). Al posto di Authentik: sul computer non c'è un
+    # login da fare, ma una pagina qualunque del browser non deve poter usare la collezione
+    # solo perché raggiunge localhost. Mai impostarla su un server.
+    anki_desktop_key: str | None = Field(default=None, min_length=32)
+
     # Solo sviluppo, senza Authentik: /api/auth/login apre subito una sessione "dev".
     # Rifiutato se il processo serve anche la PWA (ANKI_WEB_DIR, cioè l'immagine Docker).
     anki_dev_login: bool = False
@@ -98,6 +106,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "anki_web_dir",
+        "anki_desktop_key",
         "anki_api_token_file",
         "anki_api_token",
         "anki_oidc_client_secret_file",
@@ -173,6 +182,18 @@ class Settings(BaseSettings):
                 "ANKI_OIDC_CLIENT_ID e ANKI_OIDC_CLIENT_SECRET(_FILE)"
             )
         return self
+
+    @model_validator(mode="after")
+    def _desktop_alone(self):
+        # la chiave del desktop vale come una sessione: niente login di altro tipo accanto,
+        # così un'immagine del server con la variabile impostata per sbaglio non parte
+        if self.anki_desktop_key and (self.anki_oidc_issuer or self.anki_dev_login):
+            raise ValueError("ANKI_DESKTOP_KEY non va insieme a ANKI_OIDC_* o ANKI_DEV_LOGIN")
+        return self
+
+    @property
+    def desktop_mode(self) -> bool:
+        return bool(self.anki_desktop_key)
 
     @property
     def oidc_enabled(self) -> bool:
