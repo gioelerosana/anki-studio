@@ -34,6 +34,12 @@ const HEALTH_TIMEOUT_MS = 90_000;
 const SHUTDOWN_TIMEOUT_MS = 120_000;
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 const DARK_BACKGROUND = '#0a0a0a';
+// Zoom della finestra: nel browser c'è quello di sistema (Ctrl +/−), qui niente menu e quindi
+// niente scorciatoie di Chromium. Lo decide la PWA (Impostazioni → Aspetto) o la tastiera; i
+// gradini sono quelli classici, ma la PWA può chiedere un valore qualunque nei limiti.
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.33, 1.5, 1.75, 2, 2.5, 3];
 const LIGHT_BACKGROUND = '#fcfcfc';
 
 // Stessa struttura del repository, sia qui sia nel pacchetto (/usr/lib/anki-studio):
@@ -64,6 +70,63 @@ function readBuildInfo(): BuildInfo {
 }
 
 const build = readBuildInfo();
+
+// Preferenze del solo desktop, in ~/.config/Anki Studio: non stanno in localStorage perché lo
+// zoom va applicato alla finestra prima che la PWA si carichi (niente scatto all'avvio).
+const preferencesPath = path.join(app.getPath('userData'), 'preferences.json');
+
+interface Preferences {
+  zoomFactor: number;
+}
+
+function clampZoom(value: unknown): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : 1;
+  // due decimali bastano (133%) e tengono il file leggibile
+  return Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, n)) * 100) / 100;
+}
+
+function readPreferences(): Preferences {
+  try {
+    const raw = JSON.parse(fs.readFileSync(preferencesPath, 'utf8')) as Partial<Preferences>;
+    return { zoomFactor: clampZoom(raw.zoomFactor) };
+  } catch {
+    return { zoomFactor: 1 };
+  }
+}
+
+function writePreferences(): void {
+  try {
+    fs.mkdirSync(path.dirname(preferencesPath), { recursive: true });
+    fs.writeFileSync(preferencesPath, `${JSON.stringify(preferences, null, 2)}\n`);
+  } catch (error: unknown) {
+    // la preferenza vale comunque per questa sessione
+    console.warn('[anki-studio] salvataggio delle preferenze non riuscito:', error);
+  }
+}
+
+const preferences = readPreferences();
+
+/** Applica e salva lo zoom; la PWA lo riceve per tenere allineate le impostazioni. */
+function setZoom(value: unknown): number {
+  const factor = clampZoom(value);
+  preferences.zoomFactor = factor;
+  writePreferences();
+  if (window) {
+    window.webContents.setZoomFactor(factor);
+    window.webContents.send('zoom:changed', factor);
+  }
+  return factor;
+}
+
+/** Gradino successivo (o precedente) rispetto allo zoom attuale, anche se è un valore libero. */
+function stepZoom(direction: 1 | -1): number {
+  const current = preferences.zoomFactor;
+  const next =
+    direction > 0
+      ? ZOOM_STEPS.find((step) => step > current + 0.001)
+      : [...ZOOM_STEPS].reverse().find((step) => step < current - 0.001);
+  return setZoom(next ?? current);
+}
 let backend: ChildProcess | null = null;
 let backendExited = false;
 let quitting = false;
@@ -104,6 +167,8 @@ async function start(): Promise<void> {
   });
   ipcMain.on('window:close', (event) => sender(event)?.close());
   ipcMain.handle('window:isMaximized', (event) => sender(event)?.isMaximized() ?? false);
+  ipcMain.handle('zoom:get', () => preferences.zoomFactor);
+  ipcMain.handle('zoom:set', (_, value: unknown) => setZoom(value));
 
   const logPath = path.join(dataDir, 'desktop.log');
   try {
@@ -261,6 +326,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      zoomFactor: preferences.zoomFactor,
     },
   });
   window.once('ready-to-show', () => window?.show());
@@ -282,11 +348,26 @@ function createWindow(): void {
     void openExternalUrl(url);
   });
 
-  // Ricarica e strumenti di sviluppo senza menu: F5 / Ctrl+R, Ctrl+Shift+I
+  // Ctrl + rotella: Electron lo segnala senza zoomare; si passa dai gradini, così il valore
+  // salvato e quello nelle impostazioni restano gli stessi.
+  window.webContents.on('zoom-changed', (_, direction) => {
+    stepZoom(direction === 'in' ? 1 : -1);
+  });
+
+  // Ricarica, zoom e strumenti di sviluppo senza menu: F5 / Ctrl+R, Ctrl +/−/0, Ctrl+Shift+I
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
     const ctrl = input.control || input.meta;
-    if (input.key === 'F5' || (ctrl && !input.shift && input.key.toLowerCase() === 'r')) {
+    if (ctrl && !input.alt && (input.key === '+' || input.key === '=')) {
+      event.preventDefault();
+      stepZoom(1);
+    } else if (ctrl && !input.alt && (input.key === '-' || input.key === '_')) {
+      event.preventDefault();
+      stepZoom(-1);
+    } else if (ctrl && !input.alt && input.key === '0') {
+      event.preventDefault();
+      setZoom(1);
+    } else if (input.key === 'F5' || (ctrl && !input.shift && input.key.toLowerCase() === 'r')) {
       event.preventDefault();
       window?.webContents.reload();
     } else if (ctrl && input.shift && input.key.toLowerCase() === 'i') {
