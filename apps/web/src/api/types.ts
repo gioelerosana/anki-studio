@@ -19,6 +19,22 @@ export interface DeckNode {
   children: DeckNode[];
 }
 
+/** Cosa contiene un mazzo, sottomazzi compresi (per la conferma prima di eliminarlo). */
+export interface DeckInfo {
+  id: number;
+  full_name: string;
+  /** Filtrato: eliminandolo le carte tornano ai mazzi d'origine, non si cancella nulla. */
+  filtered: boolean;
+  subdecks: number;
+  cards: number;
+  notes: number;
+}
+
+export interface DeckDeleteOut {
+  deleted_cards: number;
+  deleted_decks: number;
+}
+
 export interface AvItem {
   type: 'sound' | 'tts';
   url?: string | null;

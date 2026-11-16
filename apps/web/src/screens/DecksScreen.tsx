@@ -7,6 +7,8 @@ import type { DeckNode, TodayStats } from '../api/types';
 import { formatDuration, plural } from '../app/format';
 import { navigate } from '../app/route';
 import { DeckList } from '../components/DeckList';
+import { DeleteDeckDialog } from '../decks/DeleteDeckDialog';
+import { useToast } from '../app/toasts';
 import { useRemoteDecks } from '../remote/RemoteScreenProvider';
 import { primeAudio } from '../study/audio';
 import { useSync } from '../sync/SyncProvider';
@@ -16,6 +18,8 @@ export function DecksScreen() {
   const [decks, setDecks] = useState<DeckNode[] | null>(null);
   const [today, setToday] = useState<TodayStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<DeckNode | null>(null);
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -126,9 +130,24 @@ export function DecksScreen() {
                   navigate({ name: 'study', deckId: deck.id });
                 }}
                 onOptions={(deck) => navigate({ name: 'settings', section: 'decks', deckId: deck.id })}
+                onDelete={setToDelete}
               />
             </>
           )}
+          <DeleteDeckDialog
+            deck={toDelete}
+            onClose={() => setToDelete(null)}
+            onDeleted={(deck, result) => {
+              setToDelete(null);
+              toast(
+                'success',
+                result.deleted_cards > 0
+                  ? `«${deck.name}» eliminato con ${plural(result.deleted_cards, 'carta', 'carte')}`
+                  : `«${deck.name}» eliminato`,
+              );
+              void load();
+            }}
+          />
         </div>
       </main>
     </div>

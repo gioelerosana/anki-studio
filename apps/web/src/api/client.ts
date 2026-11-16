@@ -12,6 +12,8 @@ import type {
   AuthLogout,
   AuthUser,
   CardPreview,
+  DeckDeleteOut,
+  DeckInfo,
   DeckNode,
   DeckOptions,
   DeckOptionsInput,
@@ -84,6 +86,9 @@ export const api = {
 
   decks: () => request<DeckNode[]>('GET', '/decks'),
   todayStats: () => request<TodayStats>('GET', '/stats/today'),
+  deckInfo: (deckId: number) => request<DeckInfo>('GET', `/decks/${deckId}`),
+  /** Elimina il mazzo con sottomazzi e carte, come Anki desktop. Solo dalla sessione; chiedi sempre conferma. */
+  deleteDeck: (deckId: number) => request<DeckDeleteOut>('DELETE', `/decks/${deckId}`),
 
   study: (deckId: number) => request<StudyState>('GET', `/decks/${deckId}/study`),
   answer: (deckId: number, cardId: number, rating: Rating, timeTakenMs: number) =>
