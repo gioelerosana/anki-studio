@@ -19,6 +19,25 @@ class DeckNode(BaseModel):
     children: list["DeckNode"] = []
 
 
+class DeckInfo(BaseModel):
+    """Cosa contiene un mazzo, per la conferma prima di eliminarlo. I conteggi comprendono i
+    sottomazzi; per un mazzo filtrato sono le carte che, eliminandolo, tornano nel mazzo d'origine."""
+
+    id: int
+    full_name: str
+    filtered: bool
+    subdecks: int
+    cards: int
+    notes: int
+
+
+class DeckDeleteOut(BaseModel):
+    # carte cancellate davvero (0 per un mazzo filtrato: le carte tornano al loro mazzo)
+    deleted_cards: int
+    # il mazzo e i suoi sottomazzi
+    deleted_decks: int
+
+
 class AvItem(BaseModel):
     type: Literal["sound", "tts"]
     url: str | None = None

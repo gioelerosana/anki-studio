@@ -301,6 +301,8 @@ La PWA e l'API stanno **sulla stessa origine**: lo stesso processo serve i file 
 | GET | `/api/decks` | Albero dei mazzi con conteggi nuove/in apprendimento/da ripassare |
 | GET | `/api/stats/today` | Review di oggi, tempo, "Di nuovo" |
 | GET | `/api/stats?deck_id=&days=30` | Carte per stato, review per giorno, ritenzione, previsione a 7 giorni |
+| GET | `/api/decks/{id}` | `DeckInfo`: carte, note e sottomazzi (compresi) che se ne andrebbero eliminandolo, `filtered` (per la conferma) |
+| DELETE | `/api/decks/{id}` | Elimina il mazzo con sottomazzi e carte come Anki desktop (un filtrato rimanda le carte a casa) → `{deleted_cards, deleted_decks}`. Solo sessione; la PWA chiede conferma, da qui non si annulla |
 | GET | `/api/decks/{id}/study` | Prossima carta del mazzo (`done: true` se hai finito) |
 | POST | `/api/decks/{id}/study/answer` | `{card_id, rating: 1-4, time_taken_ms}`, restituisce già la carta successiva |
 | POST | `/api/decks/{id}/study/undo` | Annulla l'ultima risposta o azione **dello studio** (409 se non c'è niente: mai le modifiche di agenti, approvazioni o selezioni di mazzo) |
@@ -419,7 +421,7 @@ vietata ai token con scope finché non la si elenca lì):
 | `POST` hub/notes/batch, hub/decks, sync, media | sì | sì | 403 | 403 |
 | `POST` hub/operations/{id}/undo | qualsiasi operazione | **solo le proprie** (le altre: 404) | 403 | 403 |
 | `PATCH` notes/{id} | sì (ma non i tag riservati: 422) | **solo note col proprio tag `agent::<nome>`** (i tag riservati restano com'erano) | 403 | 403 |
-| move, `DELETE` note, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me` | sì | 403 | 403 | 403 |
+| move, `DELETE` note, `GET`/`DELETE` decks/{id}, tag in blocco, `/tokens`, sync login/logout/full, studio, statistiche, `GET` media, `auth/me` | sì | 403 | 403 | 403 |
 | WS `/api/remote` | `screen` e `remote` | no | no | **solo `screen`** |
 | `/mcp` | sì (`ANKI_API_TOKEN`) | sì | sì | 403 |
 
